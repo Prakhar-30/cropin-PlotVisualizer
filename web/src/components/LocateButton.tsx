@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Fix } from '../lib/currentLocationLayer.js';
 
 /**
@@ -19,9 +19,24 @@ export interface LocateButtonProps {
 
 type State =
   | { kind: 'idle' }
-  | { kind: 'locating' }
+  | { kind: 'locating'; bestM: number | null }
   | { kind: 'located'; accuracyM: number }
   | { kind: 'error'; message: string };
+
+/**
+ * Stop refining once the fix is at least this good.
+ *
+ * A GNSS receiver's first fix is its worst. It reports as soon as it has a
+ * solution at all, then tightens over the next several seconds as more
+ * satellites lock and the ephemeris fills in - 60 m improving to 8 m is a
+ * completely ordinary sequence on a phone. `getCurrentPosition` returns that
+ * first, worst answer and stops, so watching and keeping the best is worth
+ * roughly an order of magnitude on hardware that actually has GNSS.
+ */
+const GOOD_ENOUGH_M = 10;
+
+/** Give up refining after this long and keep whatever was best. */
+const REFINE_TIMEOUT_MS = 20_000;
 
 /** Browser geolocation errors are numeric codes; these are the three that occur. */
 function describe(error: GeolocationPositionError): string {
@@ -39,27 +54,83 @@ function describe(error: GeolocationPositionError): string {
 
 export function LocateButton({ onLocated }: LocateButtonProps) {
   const [state, setState] = useState<State>({ kind: 'idle' });
+  const watchId = useRef<number | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bestM = useRef<number>(Number.POSITIVE_INFINITY);
+
+  const stop = useCallback(() => {
+    if (watchId.current !== null) {
+      navigator.geolocation.clearWatch(watchId.current);
+      watchId.current = null;
+    }
+    if (timer.current !== null) {
+      clearTimeout(timer.current);
+      timer.current = null;
+    }
+  }, []);
+
+  // A watch left running after the page moves on keeps the receiver awake and
+  // drains the battery of the very phone this is meant to help.
+  useEffect(() => stop, [stop]);
+
+  /** Accept the current best rather than waiting out the refine window. */
+  const settleNow = () => {
+    stop();
+    setState((current) =>
+      current.kind === 'locating' && current.bestM !== null
+        ? { kind: 'located', accuracyM: current.bestM }
+        : current,
+    );
+  };
 
   const locate = () => {
     if (!('geolocation' in navigator)) {
       setState({ kind: 'error', message: 'This browser has no geolocation' });
       return;
     }
-    setState({ kind: 'locating' });
-    navigator.geolocation.getCurrentPosition(
+    stop();
+    bestM.current = Number.POSITIVE_INFINITY;
+    setState({ kind: 'locating', bestM: null });
+
+    const settle = () => {
+      stop();
+      setState((current) =>
+        current.kind === 'locating' && current.bestM !== null
+          ? { kind: 'located', accuracyM: current.bestM }
+          : current,
+      );
+    };
+
+    timer.current = setTimeout(settle, REFINE_TIMEOUT_MS);
+
+    watchId.current = navigator.geolocation.watchPosition(
       (position) => {
-        const fix: Fix = {
+        const accuracyM = position.coords.accuracy;
+        // Only accept a fix that beats the best so far. Readings wander both
+        // ways, and letting the overlay jump to a worse one looks like drift.
+        if (accuracyM >= bestM.current) return;
+        bestM.current = accuracyM;
+
+        onLocated({
           lat: position.coords.latitude,
           lng: position.coords.longitude,
-          accuracyM: position.coords.accuracy,
-        };
-        setState({ kind: 'located', accuracyM: fix.accuracyM });
-        onLocated(fix);
+          accuracyM,
+        });
+
+        if (accuracyM <= GOOD_ENOUGH_M) {
+          stop();
+          setState({ kind: 'located', accuracyM });
+        } else {
+          setState({ kind: 'locating', bestM: accuracyM });
+        }
       },
-      (error) => setState({ kind: 'error', message: describe(error) }),
+      (error) => {
+        stop();
+        setState({ kind: 'error', message: describe(error) });
+      },
       // A cached position would defeat the purpose; the whole point is to find
       // out where this machine is now.
-      { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 },
+      { enableHighAccuracy: true, timeout: REFINE_TIMEOUT_MS, maximumAge: 0 },
     );
   };
 
@@ -71,14 +142,28 @@ export function LocateButton({ onLocated }: LocateButtonProps) {
         onClick={locate}
         disabled={state.kind === 'locating'}
       >
-        {state.kind === 'locating' ? 'Locating…' : 'Use my location'}
+        {state.kind === 'locating' ? 'Refining…' : 'Use my location'}
       </button>
+
+      {state.kind === 'locating' && state.bestM !== null && (
+        <p className="locate__note">
+          Best so far ±{Math.round(state.bestM)} m — still improving.{' '}
+          <button type="button" className="locate__inline" onClick={settleNow}>
+            Use this
+          </button>
+        </p>
+      )}
 
       {state.kind === 'located' && (
         <p className="locate__note">
           Centred on your position, accurate to about {Math.round(state.accuracyM)} m.
-          {state.accuracyM > 500 &&
-            ' That is a rough fix — check the imagery before drawing.'}
+          {state.accuracyM > 50 && (
+            <>
+              {' '}
+              This device has no GPS — that figure is Wi-Fi triangulation. Open
+              this page <strong>on your phone</strong> for a fix of 5–15 m.
+            </>
+          )}
         </p>
       )}
 
