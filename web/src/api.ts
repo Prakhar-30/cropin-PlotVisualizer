@@ -28,7 +28,25 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   } catch (cause) {
     throw new ApiRequestError(0, 'cannot reach the API', [(cause as Error).message]);
   }
-  const payload: unknown = await res.json().catch(() => null);
+  // Parse failures must not be swallowed. Returning `null` cast to `T` on a
+  // non-JSON response is how a misrouted deployment - one serving index.html
+  // for /api/plots with a cheerful 200 - turned into `Cannot read properties
+  // of null (reading 'map')` three call frames away, with a blank screen and
+  // nothing pointing at the actual cause.
+  const contentType = res.headers.get('content-type') ?? 'unknown';
+  let payload: unknown;
+  try {
+    payload = await res.json();
+  } catch {
+    if (!res.ok) {
+      throw new ApiRequestError(res.status, res.statusText || 'request failed');
+    }
+    throw new ApiRequestError(res.status, 'the API returned a non-JSON response', [
+      `${path} responded with content-type ${contentType}`,
+      'If this is HTML, requests are reaching the site instead of the API.',
+    ]);
+  }
+
   if (!res.ok) {
     const err = (payload ?? {}) as ApiError;
     throw new ApiRequestError(res.status, err.error ?? res.statusText, err.details ?? []);
