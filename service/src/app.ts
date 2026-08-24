@@ -11,8 +11,15 @@ export function buildApp() {
 
   // Says which driver is live. On a deployment that silently fell back to
   // SQLite this is the difference between "working" and "losing every plot".
-  app.get('/api/health', (_req, res) => res.json({ ok: true, store: describeStore() }));
-  app.use('/api/plots', plotsRouter);
+  // Mounted under both prefixes on purpose. The rewrite in vercel.json sends
+  // /api/* here, and whether a Function receives the original path or the
+  // rewritten one is platform behaviour this code should not have to predict.
+  // Accepting both costs nothing and cannot be wrong.
+  for (const prefix of ['/api', '']) {
+    app.get(`${prefix}/health`, (_req, res) =>
+      res.json({ ok: true, store: describeStore() }));
+    app.use(`${prefix}/plots`, plotsRouter);
+  }
 
   app.use((_req, res) => {
     const body: ApiError = { error: 'not found' };
