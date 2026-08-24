@@ -4,16 +4,7 @@
   "outputDirectory": "dist",
   "installCommand": "npm install",
   "framework": null,
-  "functions": {
-    "server/index.ts": {
-      "runtime": "@vercel/node@5.1.7"
-    }
-  },
   "rewrites": [
-    {
-      "source": "/api/(.*)",
-      "destination": "/server/index.ts"
-    },
     {
       "source": "/(.*)",
       "destination": "/index.html"

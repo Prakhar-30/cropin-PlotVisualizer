@@ -4,7 +4,7 @@
   "type": "module",
   "workspaces": [
     "shared",
-    "api",
+    "service",
     "web"
   ],
   "scripts": {

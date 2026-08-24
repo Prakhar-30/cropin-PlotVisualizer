@@ -7,10 +7,10 @@ This repository is the web half. Boundaries are created **here and only here** â
 the mobile app is a reader.
 
 ```
-shared/   @plot/shared  types, geodesic geometry, validation, palette, health grid
-api/      @plot/api     Express + the storage drivers
-web/      @plot/web     React + MapLibre draw tool
-server/                 Vercel serverless entry (wraps the same Express app)
+shared/         @plot/shared  types, geodesic geometry, validation, palette, health grid
+service/        @plot/api     Express + the storage drivers
+web/            @plot/web     React + MapLibre draw tool
+api/[...path].ts              Vercel Function; wraps the same Express app
 ```
 
 ---
@@ -37,8 +37,8 @@ Run these against your Supabase project, in order, in the SQL editor:
 
 | File | What it does |
 |------|--------------|
-| `api/sql/001_fieldar_schema.sql` | Tables, indexes, RLS, and the `?near=` function, all inside a `fieldar` schema |
-| `api/sql/002_api_surface.sql` | The `public.fieldar_*` wrappers PostgREST actually serves |
+| `service/sql/001_fieldar_schema.sql` | Tables, indexes, RLS, and the `?near=` function, all inside a `fieldar` schema |
+| `service/sql/002_api_surface.sql` | The `public.fieldar_*` wrappers PostgREST actually serves |
 
 Both are idempotent and additive. Neither contains a `DROP TABLE`, `TRUNCATE`,
 or `DELETE`, so running them on a project that already has tables is safe.
@@ -50,16 +50,30 @@ that fails silently, as a 404 on every request.
 
 ### 2. Vercel
 
-Import this repository and set two environment variables:
+Import this repository with **Root Directory `./`** and **Framework Preset
+"Other"**. Both matter:
+
+- `vercel.json`, `api/`, and the workspace `package.json` all live at the
+  repository root, so a Root Directory of `service` or `web` cannot see them -
+  the build then produces either an API with no site or a site with no API.
+- Choosing a framework preset makes Vercel override the build command and
+  output directory from the dashboard, which silently supersedes `vercel.json`.
+
+Then set two environment variables:
 
 ```
 SUPABASE_URL         https://<project-ref>.supabase.co
 SUPABASE_SECRET_KEY  the secret / service_role key
 ```
 
-`vercel.json` handles the rest: `web/dist` is served statically, `/api/*` is
-rewritten to `server/index.ts`, and everything else falls through to
-`index.html` for client-side routing.
+`vercel.json` handles the rest. Vercel builds a Function from `api/[...path].ts`
+and matches the filesystem - static assets and that Function - *before* any
+rewrite, so `/api/*` resolves on its own and the catch-all rewrite only picks up
+unmatched paths for client-side routing.
+
+The Express package sits in `service/` rather than `api/` because Vercel compiles
+every file under `api/` into its own Function; a package there would have had
+each of its source files deployed as a separate endpoint.
 
 **The secret key is server-side only.** It bypasses every row-level security
 policy. It must never appear in the browser bundle or in the Android app, both
@@ -76,7 +90,7 @@ SUPABASE_URL=... SUPABASE_SECRET_KEY=... npm run seed
 
 ## Why two storage drivers
 
-`api/src/store/` holds a `PlotStore` interface with two implementations:
+`service/src/store/` holds a `PlotStore` interface with two implementations:
 
 - **sqlite** â€” local development and the test suite. No network, no credentials,
   and `:memory:` gives every test run a clean database.
@@ -92,8 +106,14 @@ rules a second time as CHECK constraints, because a constraint protects every
 path into the table and an application validator only protects one.
 
 The SQLite driver is loaded by dynamic import. `better-sqlite3` is a native
-addon; a statically imported one would be bundled into the serverless function
-and loaded on every cold start despite never being used.
+addon; a statically imported one would be bundled into the Function and loaded
+on every cold start despite never being used. It is a devDependency for the same
+reason.
+
+If `SUPABASE_URL` and `SUPABASE_SECRET_KEY` are missing on a serverless platform
+the store refuses to start rather than falling back to a file. That fallback
+looks healthy - plots save, the list populates - until the instance recycles and
+every boundary someone drew is gone.
 
 ---
 

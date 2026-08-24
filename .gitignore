@@ -11,6 +11,6 @@ dist/
 !.env.example
 
 # Local development database. The deployed store is Supabase.
-api/data/*.db
-api/data/*.db-shm
-api/data/*.db-wal
+service/data/*.db
+service/data/*.db-shm
+service/data/*.db-wal
