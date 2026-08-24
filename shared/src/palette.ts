@@ -21,7 +21,7 @@ export const PLOT_COLOURS: readonly PlotColour[] = [
 
 /** Opacity each surface is drawn at, shared with the AR overlay. */
 export const PLOT_ALPHA = {
-  wallFill: 0.28,
+  wallFill: 0.16,
   groundFill: 0.12,
   rail: 1,
   outline: 0.9,

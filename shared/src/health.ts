@@ -40,15 +40,22 @@ export const SEVERITY_LABELS: Record<Severity, string> = {
 };
 
 /**
- * Cell colours, red-to-green. Independent of the plot palette on purpose: that
- * palette identifies *which* plot, this one grades *condition*, and reusing one
- * for the other would make a red plot look like a dying plot.
+ * Cell colours: green through yellow and amber to brown.
+ *
+ * Independent of the plot palette on purpose - that palette identifies *which*
+ * plot, this one grades *condition*, and reusing one for the other would make a
+ * red plot look like a dying plot.
+ *
+ * The bad end is brown rather than red because brown is what the ground
+ * actually looks like where a crop has failed, so the grading reads as a
+ * description rather than as an alarm. Red also collides with the boundary
+ * palette, which is the one colour that must stay unambiguous.
  */
 export const SEVERITY_COLOURS: Record<Severity, string> = {
-  0: '#1a9850',
-  1: '#d9ef8b',
-  2: '#fdae61',
-  3: '#d73027',
+  0: '#4d9221',
+  1: '#d9d61c',
+  2: '#d98b21',
+  3: '#8c5109',
 };
 
 /** A cell is only reported as a hotspot at or above this band. */
@@ -169,6 +176,22 @@ export function buildHealthSnapshot(options: {
 
       if (!turf.booleanPointInPolygon(turf.point([centroidLng, centroidLat]), polygon)) continue;
 
+      const square = ringToPolygon([
+        [west, south],
+        [east, south],
+        [east, north],
+        [west, north],
+        [west, south],
+      ]);
+
+      // Trim the square to the boundary. Keeping a cell because its centre is
+      // inside still leaves up to half of it hanging over the fence, so the
+      // grading bleeds into the neighbour's field - and this overlay's whole
+      // claim is that it describes *this* plot. The intersection is used when
+      // there is one; a cell fully inside comes back unchanged.
+      const clipped = clipToBoundary(square, polygon);
+      if (!clipped) continue;
+
       const value = sample(centroidLat, centroidLng);
       cells.push({
         col,
@@ -177,13 +200,7 @@ export function buildHealthSnapshot(options: {
         severity: classifySeverity(value),
         centroid_lat: centroidLat,
         centroid_lng: centroidLng,
-        cell: ringToPolygon([
-          [west, south],
-          [east, south],
-          [east, north],
-          [west, north],
-          [west, south],
-        ]),
+        cell: clipped,
       });
     }
   }
@@ -333,6 +350,36 @@ export function hotspotAreaFraction(snapshot: HealthSnapshot, polygon: Polygon):
   const plotArea = geodesicAreaSqM(polygon);
   if (plotArea <= 0) return 0;
   return snapshot.hotspots.reduce((sum, h) => sum + h.area_sq_m, 0) / plotArea;
+}
+
+/**
+ * Intersects one cell with the plot boundary.
+ *
+ * Turf returns a MultiPolygon for a concave plot that cuts a cell into separate
+ * pieces. Only the largest piece is kept: the alternative is widening the cell
+ * type to hold multipolygons everywhere for a case that is a sliver of a sliver.
+ */
+function clipToBoundary(square: Polygon, polygon: Polygon): Polygon | null {
+  let intersection;
+  try {
+    intersection = turf.intersect(turf.featureCollection([turf.feature(square), turf.feature(polygon)]));
+  } catch {
+    // A self-touching boundary can make the intersection throw. Falling back to
+    // the untrimmed square keeps the grid complete; it is at worst a cell that
+    // overhangs, which is what the old behaviour did for every cell.
+    return square;
+  }
+  if (!intersection) return null;
+
+  const geometry = intersection.geometry;
+  if (geometry.type === 'Polygon') return geometry;
+  if (geometry.type === 'MultiPolygon') {
+    const largest = geometry.coordinates
+      .map((rings) => ringToPolygon(rings[0] as [number, number][]))
+      .sort((a, b) => geodesicAreaSqM(b) - geodesicAreaSqM(a))[0];
+    return largest ?? null;
+  }
+  return null;
 }
 
 function hashString(value: string): number {

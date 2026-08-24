@@ -16,18 +16,50 @@
     "better than any hue."
   ],
   "colours": [
-    { "index": 0, "name": "red",    "hex": "#FF3B30" },
-    { "index": 1, "name": "orange", "hex": "#FF9F0A" },
-    { "index": 2, "name": "yellow", "hex": "#FFD60A" },
-    { "index": 3, "name": "cyan",   "hex": "#64D2FF" },
-    { "index": 4, "name": "blue",   "hex": "#0A84FF" },
-    { "index": 5, "name": "purple", "hex": "#BF5AF2" },
-    { "index": 6, "name": "pink",   "hex": "#FF375F" },
-    { "index": 7, "name": "white",  "hex": "#F2F2F7" }
+    {
+      "index": 0,
+      "name": "red",
+      "hex": "#FF3B30"
+    },
+    {
+      "index": 1,
+      "name": "orange",
+      "hex": "#FF9F0A"
+    },
+    {
+      "index": 2,
+      "name": "yellow",
+      "hex": "#FFD60A"
+    },
+    {
+      "index": 3,
+      "name": "cyan",
+      "hex": "#64D2FF"
+    },
+    {
+      "index": 4,
+      "name": "blue",
+      "hex": "#0A84FF"
+    },
+    {
+      "index": 5,
+      "name": "purple",
+      "hex": "#BF5AF2"
+    },
+    {
+      "index": 6,
+      "name": "pink",
+      "hex": "#FF375F"
+    },
+    {
+      "index": 7,
+      "name": "white",
+      "hex": "#F2F2F7"
+    }
   ],
   "alpha": {
-    "$comment": "Opacity each surface is drawn at, so the web tool and the AR overlay agree on how solid a boundary looks.",
-    "wallFill": 0.28,
+    "$comment": "Opacity each surface is drawn at, so the web tool and the AR overlay agree. wallFill is low because walls overlap: standing inside a plot puts four of them in frame at once, and anything heavier compounds into solid colour.",
+    "wallFill": 0.16,
     "groundFill": 0.12,
     "rail": 1.0,
     "outline": 0.9
