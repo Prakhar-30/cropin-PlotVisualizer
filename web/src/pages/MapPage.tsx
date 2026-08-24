@@ -4,8 +4,10 @@ import { useSearchParams } from 'react-router-dom';
 import { api, ApiRequestError, type PlotHealth } from '../api.js';
 import { DrawPanel } from '../components/DrawPanel.js';
 import { HealthPanel } from '../components/HealthPanel.js';
+import { LocateButton } from '../components/LocateButton.js';
 import { SearchBox } from '../components/SearchBox.js';
 import { emptyDrawState, PlotDrawController, type DrawState } from '../lib/drawController.js';
+import { CurrentLocationLayer } from '../lib/currentLocationLayer.js';
 import { PlotHealthLayer } from '../lib/healthLayer.js';
 import { SavedPlotsLayer } from '../lib/plotsLayer.js';
 import { useMapLibre } from '../lib/useMapLibre.js';
@@ -16,6 +18,7 @@ export function MapPage() {
   const controller = useRef<PlotDrawController | null>(null);
   const savedLayer = useRef<SavedPlotsLayer | null>(null);
   const healthLayer = useRef<PlotHealthLayer | null>(null);
+  const hereLayer = useRef<CurrentLocationLayer | null>(null);
 
   const [drawState, setDrawState] = useState<DrawState>(emptyDrawState);
   const [plots, setPlotList] = useState<Plot[]>([]);
@@ -55,18 +58,22 @@ export function MapPage() {
     // Health cells go underneath the saved-plot outlines: the grid is context,
     // the boundary is the thing being agreed on, so the boundary stays on top.
     const grid = new PlotHealthLayer(map, layer.bottomLayerId());
+    const here = new CurrentLocationLayer(map, layer.bottomLayerId());
     const draw = new PlotDrawController(map, setDrawState);
     savedLayer.current = layer;
     healthLayer.current = grid;
+    hereLayer.current = here;
     controller.current = draw;
     void refreshPlots();
     return () => {
       draw.destroy();
+      here.destroy();
       grid.destroy();
       layer.destroy();
       controller.current = null;
       savedLayer.current = null;
       healthLayer.current = null;
+      hereLayer.current = null;
     };
   }, [map, refreshPlots]);
 
@@ -165,6 +172,19 @@ export function MapPage() {
           } else {
             map.flyTo({ center: [hit.lng, hit.lat], zoom: 16 });
           }
+        }}
+      />
+      <LocateButton
+        onLocated={(fix) => {
+          hereLayer.current?.setFix(fix);
+          // Zoom chosen from the fix's own accuracy rather than fixed: framing
+          // a 2 km Wi-Fi fix at building zoom would imply a precision the
+          // position does not have.
+          map?.flyTo({
+            center: [fix.lng, fix.lat],
+            zoom: fix.accuracyM > 500 ? 15 : 18,
+            duration: 900,
+          });
         }}
       />
       <HealthPanel
