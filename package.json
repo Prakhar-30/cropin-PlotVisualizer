@@ -1,0 +1,20 @@
+{
+  "name": "plot-web-root",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "shared",
+    "api",
+    "web"
+  ],
+  "scripts": {
+    "build:shared": "npm run build -w @plot/shared",
+    "build": "npm run build:shared && npm run build -w @plot/api && npm run build -w @plot/web",
+    "typecheck": "npm run build:shared && npm run typecheck -w @plot/api && npm run typecheck -w @plot/web",
+    "seed": "npm run build:shared && npm run seed -w @plot/api",
+    "dev:api": "npm run dev -w @plot/api",
+    "dev:web": "npm run dev -w @plot/web",
+    "test:api": "npm run test -w @plot/api"
+  },
+  "devDependencies": {}
+}

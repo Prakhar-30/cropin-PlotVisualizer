@@ -1,0 +1,35 @@
+{
+  "$comment": [
+    "The plot palette. Single source of truth for both projects.",
+    "",
+    "Edit THIS file, then run tools/gen-palette.mjs, which regenerates",
+    "plot-web/shared/src/palette.ts and the Kotlin PlotPalette.kt. Neither",
+    "generated file should be edited by hand.",
+    "",
+    "A plot's colour_index (0-7) is assigned by fieldar.pick_colour_index() so",
+    "that no two plots within 500 m share a slot. Colours are chosen to survive",
+    "the two backgrounds this app actually runs against: satellite imagery of",
+    "farmland, and a phone camera pointed at a field. Both are dominated by",
+    "green and brown, so there is no green in the palette - a green boundary on",
+    "a green crop is the one combination guaranteed to disappear. White is",
+    "included because the first field test happened after dark, where it reads",
+    "better than any hue."
+  ],
+  "colours": [
+    { "index": 0, "name": "red",    "hex": "#FF3B30" },
+    { "index": 1, "name": "orange", "hex": "#FF9F0A" },
+    { "index": 2, "name": "yellow", "hex": "#FFD60A" },
+    { "index": 3, "name": "cyan",   "hex": "#64D2FF" },
+    { "index": 4, "name": "blue",   "hex": "#0A84FF" },
+    { "index": 5, "name": "purple", "hex": "#BF5AF2" },
+    { "index": 6, "name": "pink",   "hex": "#FF375F" },
+    { "index": 7, "name": "white",  "hex": "#F2F2F7" }
+  ],
+  "alpha": {
+    "$comment": "Opacity each surface is drawn at, so the web tool and the AR overlay agree on how solid a boundary looks.",
+    "wallFill": 0.28,
+    "groundFill": 0.12,
+    "rail": 1.0,
+    "outline": 0.9
+  }
+}

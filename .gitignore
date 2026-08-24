@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.vercel/
+
+# Secrets. SUPABASE_SECRET_KEY acts as service_role and bypasses every
+# row-level security policy in the project.
+.env
+.env.*
+!.env.example
+
+# Local development database. The deployed store is Supabase.
+api/data/*.db
+api/data/*.db-shm
+api/data/*.db-wal
