@@ -20,9 +20,31 @@ export type { PlotStore } from './types.js';
  */
 let ready: Promise<PlotStore> | null = null;
 
+/**
+ * True on a platform whose filesystem does not survive between invocations.
+ *
+ * Both Vercel and AWS Lambda set these themselves; nothing has to be configured
+ * for the check to work.
+ */
+function isServerless(): boolean {
+  return Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+}
+
 async function createStore(): Promise<PlotStore> {
   const supabase = supabaseStoreFromEnv();
   if (supabase) return supabase;
+
+  // Refuse to fall back to a file on a serverless platform. Doing so looks
+  // healthy - plots save, the list populates - right up to the moment the
+  // instance is recycled and every boundary someone drew is gone. A deployment
+  // that is missing its credentials should fail on the first request, loudly.
+  if (isServerless()) {
+    throw new Error(
+      'SUPABASE_URL and SUPABASE_SECRET_KEY are not set. A serverless deployment ' +
+        'has no durable filesystem, so the SQLite fallback would lose every plot ' +
+        'when the instance recycles. Set both in the project environment.',
+    );
+  }
 
   const { SqlitePlotStore } = await import('./sqlite.js');
   return new SqlitePlotStore();
