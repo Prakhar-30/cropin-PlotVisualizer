@@ -156,7 +156,10 @@ language sql
 volatile
 set search_path = fieldar, extensions, public
 as $fn$
-  delete from fieldar.plots;
+  -- The WHERE clause is not decoration. Supabase enables safeupdate, which
+  -- rejects an unqualified DELETE outright; `id is not null` is always true for
+  -- a primary key and satisfies it without changing what is removed.
+  delete from fieldar.plots where id is not null;
 $fn$;
 
 
