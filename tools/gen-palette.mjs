@@ -73,8 +73,18 @@ export function plotColourRgba(colourIndex: number, opacity: number): string {
 // --- Kotlin ------------------------------------------------------------------
 const kt = `${banner('//')}package com.fieldar.plotfinder.core.render
 
-/** One palette slot. [index] is the value stored in \`plots.colour_index\`. */
-data class PlotColour(val index: Int, val name: String, val argb: Long)
+/**
+ * One palette slot. [index] is the value stored in \`plots.colour_index\`.
+ *
+ * [argb] is an **Int**, not a Long, and that matters. Compose's
+ * \`Color(value: ULong)\` overload does not take an ARGB colour - it takes the
+ * already-packed 64-bit representation whose low bits are a colour-space id.
+ * Handing it \`0xFFFF3B30UL\` compiles cleanly and then throws
+ * \`ArrayIndexOutOfBoundsException: length=18; index=48\` from inside the
+ * renderer. Keeping this an Int makes \`Color(colour.argb)\` resolve to the
+ * ARGB constructor and leaves no wrong overload to pick.
+ */
+data class PlotColour(val index: Int, val name: String, val argb: Int)
 
 /**
  * Boundary colours, shared with the web tool through palette.json.
@@ -83,7 +93,7 @@ data class PlotColour(val index: Int, val name: String, val argb: Long)
  * surface it is drawing rather than baking transparency in here.
  */
 val PLOT_COLOURS: List<PlotColour> = listOf(
-${colours.map((c) => `    PlotColour(${c.index}, "${c.name}", 0xFF${c.hex.slice(1).toUpperCase()}L),`).join('\n')}
+${colours.map((c) => `    PlotColour(${c.index}, "${c.name}", 0xFF${c.hex.slice(1).toUpperCase()}.toInt()),`).join('\n')}
 )
 
 /** Opacity each surface is drawn at, shared with the web tool. */

@@ -15,7 +15,7 @@
       "destination": "/server/index.ts"
     },
     {
-      "source": "/((?!assets/).*)",
+      "source": "/(.*)",
       "destination": "/index.html"
     }
   ]
