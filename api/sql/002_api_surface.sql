@@ -96,12 +96,31 @@ create or replace view public.fieldar_plots
   with (security_invoker = true)
   as select * from fieldar.plots_api;
 
+-- The column list is spelled out rather than written as `setof
+-- fieldar.plots_near`. A `RETURNS TABLE` function does not create a named
+-- composite type - only tables and views do - so referring to one by name fails
+-- with `type "fieldar.plots_near" does not exist`. `fieldar.plots_api` below is
+-- a view, which is why *that* one can be named directly.
 create or replace function public.fieldar_plots_near(
   at_lat   double precision,
   at_lng   double precision,
   radius_m double precision default 5000
 )
-returns setof fieldar.plots_near
+returns table (
+  id            text,
+  name          text,
+  polygon       jsonb,
+  centroid_lat  double precision,
+  centroid_lng  double precision,
+  access_lat    double precision,
+  access_lng    double precision,
+  area_sq_m     double precision,
+  landmark_note text,
+  colour_index  smallint,
+  created_at    timestamptz,
+  updated_at    timestamptz,
+  distance_m    double precision
+)
 language sql
 stable
 set search_path = fieldar, extensions, public
