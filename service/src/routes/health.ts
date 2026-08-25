@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import {
-  DEFAULT_CELL_SIZE_M,
+  MAX_CELL_SIZE_M,
+  MIN_CELL_SIZE_M,
   buildHealthSnapshot,
+  recommendedCellSizeM,
   syntheticNdviSampler,
   type ApiError,
   type HealthSnapshot,
@@ -41,13 +43,18 @@ healthRouter.get<{ id: string }>('/', async (req, res, next) => {
     return;
   }
 
-  const cellSizeM = Number(req.query.cell_size_m ?? DEFAULT_CELL_SIZE_M);
-  if (!Number.isFinite(cellSizeM) || cellSizeM < 2 || cellSizeM > 100) {
+  // Sized to the plot unless the caller insists otherwise. A fixed 10 m grid
+  // gave a small plot a 3x3 raster - too coarse to locate anything inside it,
+  // and too coarse to form a hotspot cluster at all.
+  const cellSizeM = Number(req.query.cell_size_m ?? recommendedCellSizeM(plot.area_sq_m));
+  if (!Number.isFinite(cellSizeM) || cellSizeM < MIN_CELL_SIZE_M || cellSizeM > MAX_CELL_SIZE_M) {
     const body: ApiError = {
       error: 'invalid cell size',
       // The floor is not arbitrary: below the imagery's own ground resolution a
-      // finer grid is interpolation dressed up as detail.
-      details: ['cell_size_m must be between 2 and 100'],
+      // finer grid is interpolation dressed up as detail. Both bounds come from
+      // `shared`, so the value this route defaults to can never fail its own
+      // validation.
+      details: [`cell_size_m must be between ${MIN_CELL_SIZE_M} and ${MAX_CELL_SIZE_M}`],
     };
     res.status(400).json(body);
     return;

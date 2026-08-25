@@ -335,6 +335,43 @@ test('health raster covers the plot and every hotspot lies inside it', async () 
   assert.deepEqual(ranks, ranks.map((_, i) => i + 1));
 });
 
+test('cell size scales down for a small plot so the grid stays useful', async () => {
+  // The bug this covers: a fixed 10 m cell graded a 900 sq m plot as a 3x3
+  // grid. Nine cells cannot show where inside a plot a problem is, and cannot
+  // form a hotspot at all - a cluster needs three touching stressed cells, so
+  // small plots silently reported themselves perfectly healthy.
+  const small = (await post(body(square(78.1, 13.4, 0.0003)))).json as unknown as Plot;
+  const large = (await post(body(square(78.2, 13.5, 0.006)))).json as unknown as Plot;
+
+  const smallHealth = (await get(`/api/plots/${small.id}/health`)).json as {
+    cell_size_m: number;
+    cells: HealthCell[];
+  };
+  const largeHealth = (await get(`/api/plots/${large.id}/health`)).json as {
+    cell_size_m: number;
+    cells: HealthCell[];
+  };
+
+  assert.ok(
+    smallHealth.cell_size_m < largeHealth.cell_size_m,
+    `small plot should grade finer: ${smallHealth.cell_size_m} vs ${largeHealth.cell_size_m}`,
+  );
+  assert.equal(largeHealth.cell_size_m, 10, 'a large plot stays at the native imagery resolution');
+  assert.ok(
+    smallHealth.cells.length > 9,
+    `expected a usable grid, got ${smallHealth.cells.length} cells`,
+  );
+
+  // Never finer than the imagery can support, however small the plot.
+  assert.ok(smallHealth.cell_size_m >= 2, 'cell size must not go below the floor');
+
+  // And an explicit request still wins - the default is a default, not a policy.
+  const forced = (await get(`/api/plots/${large.id}/health?cell_size_m=25`)).json as {
+    cell_size_m: number;
+  };
+  assert.equal(forced.cell_size_m, 25);
+});
+
 test('health raster is deterministic and rejects a silly cell size', async () => {
   const { json: created } = await post(body(square(79.3, 15.2, 0.003)));
   const plot = created as unknown as Plot;

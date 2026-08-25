@@ -27,6 +27,44 @@ export const PLOT_ALPHA = {
   outline: 0.9,
 } as const;
 
+/** Crop-health severity band. 0 is healthy, 3 is critical. */
+export type Severity = 0 | 1 | 2 | 3;
+
+/**
+ * The severity ramp, shared with the AR overlay through palette.json.
+ *
+ * Deliberately not the plot palette: that one says *which* plot, this one says
+ * *how the crop is doing*. See the note in palette.json.
+ */
+export const SEVERITY_COLOURS: Record<Severity, string> = {
+  0: '#4d9221',
+  1: '#d9d61c',
+  2: '#d98b21',
+  3: '#8c5109',
+};
+
+export const SEVERITY_LABELS: Record<Severity, string> = {
+  0: 'Healthy',
+  1: 'Mild',
+  2: 'Stressed',
+  3: 'Critical',
+};
+
+/**
+ * Fill opacity per band, rising with severity.
+ *
+ * Healthy cells are context and must stay faint enough to see the crop through;
+ * a critical patch is the answer the agent came for and is allowed to be
+ * assertive. One flat alpha for every band tinted the whole plot uniformly,
+ * which hides exactly the contrast the layer exists to show.
+ */
+export const SEVERITY_FILL_ALPHA: Record<Severity, number> = {
+  0: 0.14,
+  1: 0.3,
+  2: 0.42,
+  3: 0.55,
+};
+
 /**
  * The colour for a plot. Out-of-range indices wrap rather than throw: a plot
  * that arrives with a bad slot should still be drawn, just not in the slot it

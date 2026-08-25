@@ -20,6 +20,62 @@ import type { Polygon } from './types.js';
 export const DEFAULT_CELL_SIZE_M = 10;
 
 /**
+ * Finest grid worth asking for.
+ *
+ * Below the imagery's own ground resolution a finer grid is interpolation
+ * dressed up as detail, so this exists to stop a small plot being given a
+ * precision the pixels cannot support.
+ */
+export const MIN_CELL_SIZE_M = 2;
+
+/**
+ * Coarsest grid accepted.
+ *
+ * Beyond this a "cell" covers a hectare and grading it says nothing about where
+ * inside the plot to walk.
+ */
+export const MAX_CELL_SIZE_M = 100;
+
+/**
+ * Roughly how many cells should span a plot's width.
+ *
+ * A fixed 10 m cell is right for a five-hectare field and useless for a small
+ * one: a 30 m plot comes back as a 3x3 grid, which is not a map of anything -
+ * it cannot show where within the plot a problem is, which is the only question
+ * the layer exists to answer. Nine cells also cannot form a hotspot, since a
+ * cluster needs three touching stressed cells, so a small plot silently
+ * reported no problems at all.
+ *
+ * Fifteen across gives a couple of hundred cells: fine enough to show the shape
+ * of a patch, coarse enough that the phone is not projecting thousands of
+ * quads per frame.
+ */
+const TARGET_CELLS_ACROSS = 15;
+
+/**
+ * The cell size to grade a plot of [areaSqM] at.
+ *
+ * Clamped at both ends and never coarser than [DEFAULT_CELL_SIZE_M], because
+ * going above the native imagery resolution throws away measurements that were
+ * actually taken. Small plots refine; large plots stay at 10 m and simply have
+ * more cells.
+ *
+ * This lives in `shared` rather than in either client so the map and the AR
+ * overlay cannot end up grading the same field at two different resolutions -
+ * which would show the agent one patch on the phone and a different-shaped one
+ * on the web tool.
+ */
+export function recommendedCellSizeM(areaSqM: number): number {
+  if (!Number.isFinite(areaSqM) || areaSqM <= 0) return DEFAULT_CELL_SIZE_M;
+  const widthM = Math.sqrt(areaSqM);
+  const raw = widthM / TARGET_CELLS_ACROSS;
+  // Half-metre steps: the exact figure is a cache key, and an irrational one
+  // would mean every request built a fresh raster.
+  const stepped = Math.round(raw * 2) / 2;
+  return Math.min(DEFAULT_CELL_SIZE_M, Math.max(MIN_CELL_SIZE_M, stepped));
+}
+
+/**
  * NDVI band edges, from the bottom up.
  *
  * NDVI runs -1..1; healthy vegetated cropland sits around 0.6-0.9, stressed or
@@ -30,33 +86,21 @@ export const DEFAULT_CELL_SIZE_M = 10;
  */
 export const NDVI_SEVERITY_EDGES = [0.25, 0.4, 0.55] as const;
 
-export type Severity = 0 | 1 | 2 | 3;
-
-export const SEVERITY_LABELS: Record<Severity, string> = {
-  0: 'Healthy',
-  1: 'Mild',
-  2: 'Stressed',
-  3: 'Critical',
-};
-
 /**
- * Cell colours: green through yellow and amber to brown.
+ * The severity type, its labels and its colours now come from the generated
+ * palette, so the AR overlay grades a cell exactly the way the map does.
  *
- * Independent of the plot palette on purpose - that palette identifies *which*
- * plot, this one grades *condition*, and reusing one for the other would make a
- * red plot look like a dying plot.
- *
- * The bad end is brown rather than red because brown is what the ground
- * actually looks like where a crop has failed, so the grading reads as a
- * description rather than as an alarm. Red also collides with the boundary
- * palette, which is the one colour that must stay unambiguous.
+ * Re-exported here rather than moved, because "severity" is a health concept
+ * and callers should not have to know it happens to be generated. The ramp
+ * itself is edited in palette.json; see tools/gen-palette.mjs.
  */
-export const SEVERITY_COLOURS: Record<Severity, string> = {
-  0: '#4d9221',
-  1: '#d9d61c',
-  2: '#d98b21',
-  3: '#8c5109',
-};
+export {
+  SEVERITY_COLOURS,
+  SEVERITY_FILL_ALPHA,
+  SEVERITY_LABELS,
+  type Severity,
+} from './palette.js';
+import type { Severity } from './palette.js';
 
 /** A cell is only reported as a hotspot at or above this band. */
 export const HOTSPOT_MIN_SEVERITY: Severity = 2;
