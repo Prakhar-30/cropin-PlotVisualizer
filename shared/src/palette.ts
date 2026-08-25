@@ -37,10 +37,10 @@ export type Severity = 0 | 1 | 2 | 3;
  * *how the crop is doing*. See the note in palette.json.
  */
 export const SEVERITY_COLOURS: Record<Severity, string> = {
-  0: '#4d9221',
-  1: '#d9d61c',
-  2: '#d98b21',
-  3: '#8c5109',
+  0: '#2fd44e',
+  1: '#ffe81a',
+  2: '#ff8a00',
+  3: '#ff2118',
 };
 
 export const SEVERITY_LABELS: Record<Severity, string> = {
@@ -59,10 +59,10 @@ export const SEVERITY_LABELS: Record<Severity, string> = {
  * which hides exactly the contrast the layer exists to show.
  */
 export const SEVERITY_FILL_ALPHA: Record<Severity, number> = {
-  0: 0.14,
-  1: 0.3,
-  2: 0.42,
-  3: 0.55,
+  0: 0.22,
+  1: 0.55,
+  2: 0.68,
+  3: 0.8,
 };
 
 /**

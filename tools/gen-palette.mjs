@@ -60,17 +60,11 @@ export type Severity = 0 | 1 | 2 | 3;
  * *how the crop is doing*. See the note in palette.json.
  */
 export const SEVERITY_COLOURS: Record<Severity, string> = {
-  0: '#4d9221',
-  1: '#d9d61c',
-  2: '#d98b21',
-  3: '#8c5109',
+${severities.map((s) => `  ${s.level}: '${s.hex.toLowerCase()}',`).join('\n')}
 };
 
 export const SEVERITY_LABELS: Record<Severity, string> = {
-  0: 'Healthy',
-  1: 'Mild',
-  2: 'Stressed',
-  3: 'Critical',
+${severities.map((s) => `  ${s.level}: '${s.label}',`).join('\n')}
 };
 
 /**
@@ -82,10 +76,7 @@ export const SEVERITY_LABELS: Record<Severity, string> = {
  * which hides exactly the contrast the layer exists to show.
  */
 export const SEVERITY_FILL_ALPHA: Record<Severity, number> = {
-  0: 0.14,
-  1: 0.3,
-  2: 0.42,
-  3: 0.55,
+${severities.map((s) => `  ${s.level}: ${s.fillAlpha},`).join('\n')}
 };
 
 /**
@@ -165,10 +156,7 @@ data class SeverityColour(
  * condition, and swapping them would make a red-slot plot look like a dead one.
  */
 val SEVERITY_COLOURS: List<SeverityColour> = listOf(
-    SeverityColour(0, "healthy", "Healthy", 0xFF4D9221.toInt(), 0.14f),
-    SeverityColour(1, "mild", "Mild", 0xFFD9D61C.toInt(), 0.3f),
-    SeverityColour(2, "stressed", "Stressed", 0xFFD98B21.toInt(), 0.42f),
-    SeverityColour(3, "critical", "Critical", 0xFF8C5109.toInt(), 0.55f),
+${severities.map((s) => `    SeverityColour(${s.level}, "${s.name}", "${s.label}", 0xFF${s.hex.slice(1).toUpperCase()}.toInt(), ${s.fillAlpha}f),`).join('\n')}
 )
 
 /**
@@ -198,6 +186,43 @@ const targets = [
   { path: join(root, 'shared', 'src', 'palette.ts'), content: ts, required: true },
   { path: join(androidDir, 'PlotPalette.kt'), content: kt, required: false },
 ];
+
+// Every colour in palette.json must actually appear in every generated file.
+//
+// This exists because the severity ramp was once added to this generator by
+// interpolating the values *while editing the generator* and pasting the
+// results in as literals. The output looked perfect and `--check` passed
+// forever after, because the generator and the files it wrote were equally
+// stale - the one failure mode a single-source-of-truth tool is supposed to
+// make impossible. A literal that no longer tracks palette.json now fails the
+// build instead of silently shipping last month's colours.
+function assertDerived(label, content, targetPath) {
+  const missing = [];
+  for (const colour of colours) {
+    if (!content.includes(colour.hex.slice(1).toUpperCase()) &&
+        !content.includes(colour.hex.toLowerCase())) {
+      missing.push(`plot ${colour.name} ${colour.hex}`);
+    }
+  }
+  for (const band of severities) {
+    if (!content.includes(band.hex.slice(1).toUpperCase()) &&
+        !content.includes(band.hex.toLowerCase())) {
+      missing.push(`severity ${band.name} ${band.hex}`);
+    }
+  }
+  if (missing.length > 0) {
+    console.error(
+      `\nBUG in ${label}: generated output does not contain values from palette.json.\n` +
+      `The template is probably hard-coding them instead of interpolating.\n` +
+      missing.map((m) => `  missing: ${m}`).join('\n') +
+      `\n  target: ${targetPath}\n`,
+    );
+    process.exit(2);
+  }
+}
+
+assertDerived('TypeScript template', ts, 'shared/src/palette.ts');
+assertDerived('Kotlin template', kt, 'PlotPalette.kt');
 
 let stale = 0;
 for (const { path, content, required } of targets) {
