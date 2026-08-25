@@ -58,57 +58,62 @@
     }
   ],
   "alpha": {
-    "$comment": "Opacity each surface is drawn at, so the web tool and the AR overlay agree. wallFill is low because walls overlap: standing inside a plot puts four of them in frame at once, and anything heavier compounds into solid colour.",
-    "wallFill": 0.16,
-    "groundFill": 0.12,
+    "$comment": "Opacity each surface is drawn at, so the web tool and the AR overlay agree. Raised after field testing: the first outdoor run produced an overlay that was technically correct and practically invisible against bright soil under an overcast sky. A phone screen outdoors competes with daylight, and alpha values chosen while looking at a monitor indoors do not survive that. wallFill stays the lowest of the group because walls overlap - standing inside a plot puts four in frame at once.",
+    "wallFill": 0.28,
+    "groundFill": 0.18,
     "rail": 1.0,
-    "outline": 0.9
+    "outline": 0.95
   },
   "health": {
     "$comment": [
       "Crop-health severity ramp, shared by the web map and the AR overlay.",
       "",
       "Kept apart from the plot palette above on purpose: that palette answers",
-      "'which plot is this', this one answers 'how is the crop doing'. Reusing one",
-      "for the other would make a red-slot plot look like a dying plot.",
+      "'which plot is this', this one answers 'how is the crop doing'.",
       "",
-      "The bad end is brown rather than red because brown is what failed ground",
-      "actually looks like, so the grading reads as a description rather than an",
-      "alarm - and red is already spoken for by plot slot 0.",
+      "Colours and alphas both raised after the first field test. The original ramp",
+      "ran green-yellow-amber-brown, chosen so the bad end described the ground",
+      "rather than alarming about it. Outdoors that reasoning failed on its own",
+      "terms: amber and brown ARE the colour of dry soil, so the two worst bands",
+      "were painting earth-colour onto earth and disappearing completely. A grading",
+      "layer has to contrast with the ground it grades, not match it.",
       "",
-      "fillAlpha rises with severity. Healthy cells are context and must not paint",
-      "over the crop the agent came to look at; a critical patch is the answer to",
-      "the question and is allowed to be assertive. A single flat alpha made a",
-      "whole plot look uniformly tinted, which is the opposite of the point."
+      "So the bad end is now red. That does collide with plot slot 0, and the",
+      "collision is accepted rather than overlooked: the two never share a surface -",
+      "plot colour is a standing wall and a rail against the sky, severity is a flat",
+      "patch on the ground - and only one plot in eight draws in slot 0 at all.",
+      "",
+      "fillAlpha still rises with severity, but from a much higher floor. Healthy",
+      "stays the faintest: it is context, and must not paint over the crop."
     ],
     "severity": [
       {
         "level": 0,
         "name": "healthy",
         "label": "Healthy",
-        "hex": "#4D9221",
-        "fillAlpha": 0.14
+        "hex": "#2FD44E",
+        "fillAlpha": 0.22
       },
       {
         "level": 1,
         "name": "mild",
         "label": "Mild",
-        "hex": "#D9D61C",
-        "fillAlpha": 0.3
+        "hex": "#FFE81A",
+        "fillAlpha": 0.55
       },
       {
         "level": 2,
         "name": "stressed",
         "label": "Stressed",
-        "hex": "#D98B21",
-        "fillAlpha": 0.42
+        "hex": "#FF8A00",
+        "fillAlpha": 0.68
       },
       {
         "level": 3,
         "name": "critical",
         "label": "Critical",
-        "hex": "#8C5109",
-        "fillAlpha": 0.55
+        "hex": "#FF2118",
+        "fillAlpha": 0.8
       }
     ]
   }

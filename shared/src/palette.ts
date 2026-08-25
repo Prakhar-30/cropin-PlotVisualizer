@@ -21,10 +21,10 @@ export const PLOT_COLOURS: readonly PlotColour[] = [
 
 /** Opacity each surface is drawn at, shared with the AR overlay. */
 export const PLOT_ALPHA = {
-  wallFill: 0.16,
-  groundFill: 0.12,
+  wallFill: 0.28,
+  groundFill: 0.18,
   rail: 1,
-  outline: 0.9,
+  outline: 0.95,
 } as const;
 
 /** Crop-health severity band. 0 is healthy, 3 is critical. */
