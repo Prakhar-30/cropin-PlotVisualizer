@@ -70,7 +70,7 @@ export const api = {
 
   getPlot: (id: string) => request<Plot>(`/plots/${encodeURIComponent(id)}`),
 
-  /** The pixelated health raster for one plot, plus its ranked hotspots. */
+  /** Crop condition for one plot: 3 m cells on all three indices, plus patches. */
   getPlotHealth: (id: string) =>
     request<PlotHealth>(`/plots/${encodeURIComponent(id)}/health`),
 
