@@ -14,8 +14,12 @@ import {
   PLOT_COLOURS,
   PLOT_ID_PATTERN,
   sqMToHectares,
+  CELL_SIZE_M,
+  HEALTH_INDICES,
+  INDEX_KEYS,
   type HealthCell,
-  type HealthHotspot,
+  type HealthPatch,
+  type IndexSummary,
   type Plot,
   type PlotWithDistance,
   type Position,
@@ -47,8 +51,6 @@ function body(ring: Position[], extra: Record<string, unknown> = {}) {
   return {
     name: 'Test plot',
     polygon: { type: 'Polygon', coordinates: [ring] },
-    access_lat: 12.818,
-    access_lng: 76.755,
     landmark_note: 'gate by the culvert',
     ...extra,
   };
@@ -91,7 +93,7 @@ test('creates a plot and recomputes area server-side', async () => {
   assert.ok(Math.abs(sqMToHectares(plot.area_sq_m) - 4.8) < 0.2, `area was ${plot.area_sq_m}`);
   assert.ok(Math.abs(plot.centroid_lat - 12.818) < 1e-6, 'centroid recomputed, not taken from body');
   assert.ok(Math.abs(plot.centroid_lng - 76.755) < 1e-6);
-  assert.equal(plot.access_lat, 12.818);
+  assert.equal('access_lat' in plot, false, 'the access point is gone from the API');
   assert.equal(plot.landmark_note, 'gate by the culvert');
   assert.ok(Date.parse(plot.created_at) > 0);
   assert.equal(plot.polygon.coordinates[0].length, 5, 'ring stored closed');
@@ -164,15 +166,12 @@ test('rejects collinear vertices that enclose no area', async () => {
   );
 });
 
-test('requires the access point', async () => {
-  const payload = body(square(76.755, 12.818, 0.002)) as Record<string, unknown>;
-  delete payload.access_lat;
-  delete payload.access_lng;
-  const { status, json } = await post(payload);
-  assert.equal(status, 400);
-  const details = json.details as string[];
-  assert.ok(details.some((d) => d.includes('access_lat')));
-  assert.ok(details.some((d) => d.includes('access_lng')));
+test('an access point in the body is ignored, not required', async () => {
+  const { status, json } = await post(
+    body(square(76.765, 12.828, 0.002), { access_lat: 12.828, access_lng: 76.765 }),
+  );
+  assert.equal(status, 201);
+  assert.equal('access_lat' in json, false);
 });
 
 test('requires a name and rejects holes and non-polygons', async () => {
@@ -285,104 +284,85 @@ test('neighbouring plots are given different colours', async () => {
 
 /* ------------------------------------------------------------ plot health */
 
-test('health raster covers the plot and every hotspot lies inside it', async () => {
+interface HealthBody {
+  cells: HealthCell[];
+  patches: HealthPatch[];
+  indices: IndexSummary[];
+  synthetic: boolean;
+  cell_size_m: number;
+}
+
+test('health grades every cell on all three indices, in 3 m cells', async () => {
   const ring = square(78.2, 14.1, 0.004);
-  const { json: created } = await post(body(ring));
-  const plot = created as unknown as Plot;
+  const plot = (await post(body(ring))).json as unknown as Plot;
 
   const { status, json } = await get(`/api/plots/${plot.id}/health`);
   assert.equal(status, 200);
+  const snapshot = json as HealthBody;
 
-  const snapshot = json as {
-    cells: HealthCell[];
-    hotspots: HealthHotspot[];
-    synthetic: boolean;
-    cell_size_m: number;
-    value_mean: number;
-  };
+  assert.equal(snapshot.synthetic, true, 'demonstration values must be declared as such');
+  assert.equal(snapshot.cell_size_m, CELL_SIZE_M);
+  assert.equal(CELL_SIZE_M, 3);
+  assert.ok(snapshot.cells.length > 500, `expected a populated grid, got ${snapshot.cells.length}`);
+  assert.deepEqual(
+    snapshot.indices.map((i) => i.key),
+    ['ndvi', 'ndre', 'lswi'],
+    'greenness, vigour, water stress - in that order',
+  );
 
-  assert.equal(snapshot.synthetic, true, 'synthetic imagery must be declared as such');
-  assert.ok(snapshot.cells.length > 50, `expected a populated grid, got ${snapshot.cells.length}`);
-  assert.ok(snapshot.value_mean > 0 && snapshot.value_mean < 1, 'NDVI mean should be in 0..1');
-
-  // The bounding box of the ring. Every cell centroid and every hotspot must
-  // fall within it - a hotspot outside the plot is a walk to someone else's
-  // field, which is the one outcome this feature cannot have.
   const lngs = ring.map((p) => p[0] as number);
   const lats = ring.map((p) => p[1] as number);
-  const [minLng, maxLng] = [Math.min(...lngs), Math.max(...lngs)];
-  const [minLat, maxLat] = [Math.min(...lats), Math.max(...lats)];
+  const inside = (lat: number, lng: number) =>
+    lng >= Math.min(...lngs) && lng <= Math.max(...lngs) && lat >= Math.min(...lats) && lat <= Math.max(...lats);
 
   for (const cell of snapshot.cells) {
-    assert.ok(
-      cell.centroid_lng >= minLng && cell.centroid_lng <= maxLng &&
-        cell.centroid_lat >= minLat && cell.centroid_lat <= maxLat,
-      'cell centroid outside the plot bounding box',
-    );
-  }
-  for (const hotspot of snapshot.hotspots) {
-    assert.ok(
-      hotspot.centroid_lng >= minLng && hotspot.centroid_lng <= maxLng &&
-        hotspot.centroid_lat >= minLat && hotspot.centroid_lat <= maxLat,
-      `hotspot ${hotspot.rank} outside the plot`,
-    );
-    assert.ok(hotspot.cell_count >= 3, 'single-cell noise must not be reported');
-    assert.ok(hotspot.severity >= 2, 'only stressed cells form hotspots');
+    assert.ok(inside(cell.centroid_lat, cell.centroid_lng), 'cell centroid outside the plot');
+    for (const spec of HEALTH_INDICES) {
+      const value = cell.values[spec.key];
+      const zone = cell.zones[spec.key];
+      assert.ok(Number.isFinite(value), `${spec.key} missing`);
+      const expected = value < spec.edges[0] ? 2 : value < spec.edges[1] ? 1 : 0;
+      assert.equal(zone, expected, `${spec.key} ${value} zoned ${zone}`);
+    }
   }
 
-  // Ranked worst-first, so an agent's route is built off `rank` alone.
-  const ranks = snapshot.hotspots.map((h) => h.rank);
-  assert.deepEqual(ranks, ranks.map((_, i) => i + 1));
+  // The values must look like a field, not noise: mostly normal, with some
+  // moderate and critical ground on each index.
+  for (const summary of snapshot.indices) {
+    const [normal, moderate, critical] = summary.zone_counts;
+    assert.ok(normal > moderate + critical, `${summary.key}: most of the plot should be normal`);
+    assert.ok(moderate + critical > 0, `${summary.key}: expected at least one patch of concern`);
+  }
 });
 
-test('cell size scales down for a small plot so the grid stays useful', async () => {
-  // The bug this covers: a fixed 10 m cell graded a 900 sq m plot as a 3x3
-  // grid. Nine cells cannot show where inside a plot a problem is, and cannot
-  // form a hotspot at all - a cluster needs three touching stressed cells, so
-  // small plots silently reported themselves perfectly healthy.
-  const small = (await post(body(square(78.1, 13.4, 0.0003)))).json as unknown as Plot;
-  const large = (await post(body(square(78.2, 13.5, 0.006)))).json as unknown as Plot;
+test('patches are moderate or critical, inside the plot, ranked per index', async () => {
+  const ring = square(78.3, 14.2, 0.003);
+  const plot = (await post(body(ring))).json as unknown as Plot;
+  const snapshot = (await get(`/api/plots/${plot.id}/health`)).json as HealthBody;
 
-  const smallHealth = (await get(`/api/plots/${small.id}/health`)).json as {
-    cell_size_m: number;
-    cells: HealthCell[];
-  };
-  const largeHealth = (await get(`/api/plots/${large.id}/health`)).json as {
-    cell_size_m: number;
-    cells: HealthCell[];
-  };
-
-  assert.ok(
-    smallHealth.cell_size_m < largeHealth.cell_size_m,
-    `small plot should grade finer: ${smallHealth.cell_size_m} vs ${largeHealth.cell_size_m}`,
-  );
-  assert.equal(largeHealth.cell_size_m, 10, 'a large plot stays at the native imagery resolution');
-  assert.ok(
-    smallHealth.cells.length > 9,
-    `expected a usable grid, got ${smallHealth.cells.length} cells`,
-  );
-
-  // Never finer than the imagery can support, however small the plot.
-  assert.ok(smallHealth.cell_size_m >= 2, 'cell size must not go below the floor');
-
-  // And an explicit request still wins - the default is a default, not a policy.
-  const forced = (await get(`/api/plots/${large.id}/health?cell_size_m=25`)).json as {
-    cell_size_m: number;
-  };
-  assert.equal(forced.cell_size_m, 25);
+  assert.ok(snapshot.patches.length > 0, 'a demonstration plot should have something to walk to');
+  const lngs = ring.map((p) => p[0] as number);
+  const lats = ring.map((p) => p[1] as number);
+  for (const patch of snapshot.patches) {
+    assert.ok(INDEX_KEYS.includes(patch.index));
+    assert.ok(patch.zone === 1 || patch.zone === 2, 'normal ground is never a drop point');
+    assert.ok(patch.cell_count >= 2, 'single-cell noise must not become a drop point');
+    assert.ok(
+      patch.centroid_lng >= Math.min(...lngs) && patch.centroid_lng <= Math.max(...lngs) &&
+        patch.centroid_lat >= Math.min(...lats) && patch.centroid_lat <= Math.max(...lats),
+      `patch ${patch.index}#${patch.rank} outside the plot`,
+    );
+  }
+  for (const key of INDEX_KEYS) {
+    const ranks = snapshot.patches.filter((p) => p.index === key).map((p) => p.rank);
+    assert.deepEqual(ranks, ranks.map((_, i) => i + 1), `${key} ranks must run 1..n`);
+  }
 });
 
-test('health raster is deterministic and rejects a silly cell size', async () => {
-  const { json: created } = await post(body(square(79.3, 15.2, 0.003)));
-  const plot = created as unknown as Plot;
-
+test('health is deterministic per plot, and 404s for an unknown plot', async () => {
+  const plot = (await post(body(square(79.3, 15.2, 0.003)))).json as unknown as Plot;
   const first = await get(`/api/plots/${plot.id}/health`);
   const second = await get(`/api/plots/${plot.id}/health`);
   assert.deepEqual(first.json, second.json, 'the same plot must always grade the same');
-
-  const tooFine = await get(`/api/plots/${plot.id}/health?cell_size_m=0.5`);
-  assert.equal(tooFine.status, 400);
-
-  const missing = await get('/api/plots/PLT-0000/health');
-  assert.equal(missing.status, 404);
+  assert.equal((await get('/api/plots/PLT-0000/health')).status, 404);
 });

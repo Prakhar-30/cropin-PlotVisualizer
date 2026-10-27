@@ -27,8 +27,6 @@ interface PlotRow {
   polygon: string;
   centroid_lat: number;
   centroid_lng: number;
-  access_lat: number;
-  access_lng: number;
   area_sq_m: number;
   landmark_note: string;
   colour_index: number;
@@ -42,8 +40,6 @@ CREATE TABLE IF NOT EXISTS plots (
   polygon       TEXT NOT NULL,
   centroid_lat  REAL NOT NULL,
   centroid_lng  REAL NOT NULL,
-  access_lat    REAL NOT NULL,
-  access_lng    REAL NOT NULL,
   area_sq_m     REAL NOT NULL,
   landmark_note TEXT NOT NULL DEFAULT '',
   colour_index  INTEGER NOT NULL DEFAULT 0,
@@ -61,6 +57,7 @@ function getDb(): Database.Database {
   if (dbPath !== ':memory:') fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
+  dropLegacyTable(db);
   db.exec(SCHEMA);
   migrate(db);
   return db;
@@ -81,6 +78,17 @@ function migrate(handle: Database.Database): void {
   if (!columns.has('colour_index')) {
     handle.exec('ALTER TABLE plots ADD COLUMN colour_index INTEGER NOT NULL DEFAULT 0');
   }
+}
+
+/**
+ * A database from before the access point was removed has `access_lat` and
+ * `access_lng` as NOT NULL columns, which every new insert would violate. The
+ * updated flow starts from a clean slate by decision, so that table is dropped
+ * and recreated rather than migrated.
+ */
+function dropLegacyTable(handle: Database.Database): void {
+  const columns = (handle.prepare('PRAGMA table_info(plots)').all() as { name: string }[]).map((c) => c.name);
+  if (columns.includes('access_lat')) handle.exec('DROP TABLE plots');
 }
 
 /** Test helper: drops the handle so the next getDb() reopens from config. */
@@ -105,8 +113,8 @@ const MAX_ID_ATTEMPTS = 20;
 function insertPlotSync(value: NormalizedPlot, forcedId?: string): Plot {
   const stmt = getDb().prepare(
     `INSERT INTO plots
-       (id, name, polygon, centroid_lat, centroid_lng, access_lat, access_lng, area_sq_m, landmark_note, colour_index, created_at)
-     VALUES (@id, @name, @polygon, @centroid_lat, @centroid_lng, @access_lat, @access_lng, @area_sq_m, @landmark_note, @colour_index, @created_at)`,
+       (id, name, polygon, centroid_lat, centroid_lng, area_sq_m, landmark_note, colour_index, created_at)
+     VALUES (@id, @name, @polygon, @centroid_lat, @centroid_lng, @area_sq_m, @landmark_note, @colour_index, @created_at)`,
   );
   const created_at = new Date().toISOString();
   const colour_index = pickColourIndex(value.centroid_lat, value.centroid_lng);
@@ -119,8 +127,6 @@ function insertPlotSync(value: NormalizedPlot, forcedId?: string): Plot {
       polygon: JSON.stringify(value.polygon),
       centroid_lat: value.centroid_lat,
       centroid_lng: value.centroid_lng,
-      access_lat: value.access_lat,
-      access_lng: value.access_lng,
       area_sq_m: value.area_sq_m,
       landmark_note: value.landmark_note,
       colour_index,

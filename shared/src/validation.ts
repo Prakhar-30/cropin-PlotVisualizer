@@ -17,8 +17,6 @@ import type { Polygon, Position } from './types.js';
 export interface NormalizedPlot {
   name: string;
   polygon: Polygon;
-  access_lat: number;
-  access_lng: number;
   landmark_note: string;
   /** Recomputed here, never taken from the client. */
   area_sq_m: number;
@@ -88,10 +86,6 @@ export function validatePlotInput(input: unknown): ValidationResult {
     errors.push('landmark_note must be a string');
   }
 
-  // The access point is a separate required field, not derived from the polygon.
-  if (!isLat(body.access_lat)) errors.push('access_lat is required and must be a latitude');
-  if (!isLng(body.access_lng)) errors.push('access_lng is required and must be a longitude');
-
   const geom = body.polygon as Polygon | undefined;
   if (!geom || typeof geom !== 'object' || geom.type !== 'Polygon' || !Array.isArray(geom.coordinates)) {
     errors.push('polygon must be a GeoJSON Polygon');
@@ -129,8 +123,6 @@ export function validatePlotInput(input: unknown): ValidationResult {
     value: {
       name,
       polygon,
-      access_lat: body.access_lat as number,
-      access_lng: body.access_lng as number,
       landmark_note,
       area_sq_m,
       centroid_lat,

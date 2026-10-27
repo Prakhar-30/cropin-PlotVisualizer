@@ -16,10 +16,8 @@ import { MapOverlay } from './mapOverlay.js';
  */
 
 const SRC_SHAPE = 'saved-plots';
-const SRC_ACCESS = 'saved-plots-access-src';
 const LAYER_FILL = 'saved-plots-fill';
 const LAYER_LINE = 'saved-plots-line';
-const LAYER_ACCESS = 'saved-plots-access';
 
 const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 
@@ -30,7 +28,6 @@ export class SavedPlotsLayer extends MapOverlay {
     super(map);
 
     map.addSource(SRC_SHAPE, { type: 'geojson', data: EMPTY });
-    map.addSource(SRC_ACCESS, { type: 'geojson', data: EMPTY });
 
     map.addLayer({
       id: LAYER_FILL,
@@ -47,17 +44,6 @@ export class SavedPlotsLayer extends MapOverlay {
       source: SRC_SHAPE,
       paint: { 'line-color': ['get', 'colour'], 'line-width': 2, 'line-dasharray': [3, 2] },
     });
-    map.addLayer({
-      id: LAYER_ACCESS,
-      type: 'circle',
-      source: SRC_ACCESS,
-      paint: {
-        'circle-radius': 4,
-        'circle-color': '#f59e0b',
-        'circle-stroke-color': '#111827',
-        'circle-stroke-width': 1,
-      },
-    });
 
     this.onLayer('click', LAYER_FILL, (e) => {
       const id = e.features?.[0]?.properties?.id;
@@ -66,7 +52,7 @@ export class SavedPlotsLayer extends MapOverlay {
   }
 
   protected layerIds(): string[] {
-    return [LAYER_ACCESS, LAYER_LINE, LAYER_FILL];
+    return [LAYER_LINE, LAYER_FILL];
   }
 
   /**
@@ -78,7 +64,7 @@ export class SavedPlotsLayer extends MapOverlay {
   }
 
   protected sourceIds(): string[] {
-    return [SRC_ACCESS, SRC_SHAPE];
+    return [SRC_SHAPE];
   }
 
   protected override releaseExtras(): void {
@@ -96,14 +82,6 @@ export class SavedPlotsLayer extends MapOverlay {
           properties: { ...feature.properties, colour: plotColour(plot.colour_index).hex },
         };
       }),
-    });
-    (this.map.getSource(SRC_ACCESS) as GeoJSONSource | undefined)?.setData({
-      type: 'FeatureCollection',
-      features: plots.map((p) => ({
-        type: 'Feature' as const,
-        geometry: { type: 'Point' as const, coordinates: [p.access_lng, p.access_lat] },
-        properties: { id: p.id },
-      })),
     });
 
     this.releaseExtras();

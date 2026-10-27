@@ -4,7 +4,8 @@ import { geodesicAreaSqM, polygonBbox, ringToPolygon } from './geo.js';
 import type { Polygon } from './types.js';
 
 /**
- * Plot health as a grid of cells, plus the clusters worth walking to.
+ * Crop condition as a grid of 3 m cells graded on three indices, plus the
+ * patches worth walking to.
  *
  * This lives in `shared` rather than in the API because three callers need the
  * exact same answer: the web tool draws the cells, the API serves them, and the
@@ -16,83 +17,62 @@ import type { Polygon } from './types.js';
  * agronomy, and they drift.
  */
 
-/** Ground resolution of one cell. Sentinel-2 red/NIR is 10 m native. */
-export const DEFAULT_CELL_SIZE_M = 10;
-
 /**
- * Finest grid worth asking for.
+ * Ground size of one cell, metres. Fixed for every plot.
  *
- * Below the imagery's own ground resolution a finer grid is interpolation
- * dressed up as detail, so this exists to stop a small plot being given a
- * precision the pixels cannot support.
+ * Three metres is fine enough to show the shape of a problem patch on the
+ * small plots this is used on, and coarse enough that a field of a few
+ * hectares is still a few thousand cells rather than tens of thousands.
  */
-export const MIN_CELL_SIZE_M = 2;
+export const CELL_SIZE_M = 3;
 
-/**
- * Coarsest grid accepted.
- *
- * Beyond this a "cell" covers a hectare and grading it says nothing about where
- * inside the plot to walk.
- */
-export const MAX_CELL_SIZE_M = 100;
+/** The three crop-condition indices, in the order the UI offers them. */
+export type IndexKey = 'ndvi' | 'ndre' | 'lswi';
 
-/**
- * Roughly how many cells should span a plot's width.
- *
- * A fixed 10 m cell is right for a five-hectare field and useless for a small
- * one: a 30 m plot comes back as a 3x3 grid, which is not a map of anything -
- * it cannot show where within the plot a problem is, which is the only question
- * the layer exists to answer. Nine cells also cannot form a hotspot, since a
- * cluster needs three touching stressed cells, so a small plot silently
- * reported no problems at all.
- *
- * Fifteen across gives a couple of hundred cells: fine enough to show the shape
- * of a patch, coarse enough that the phone is not projecting thousands of
- * quads per frame.
- */
-const TARGET_CELLS_ACROSS = 15;
-
-/**
- * The cell size to grade a plot of [areaSqM] at.
- *
- * Clamped at both ends and never coarser than [DEFAULT_CELL_SIZE_M], because
- * going above the native imagery resolution throws away measurements that were
- * actually taken. Small plots refine; large plots stay at 10 m and simply have
- * more cells.
- *
- * This lives in `shared` rather than in either client so the map and the AR
- * overlay cannot end up grading the same field at two different resolutions -
- * which would show the agent one patch on the phone and a different-shaped one
- * on the web tool.
- */
-export function recommendedCellSizeM(areaSqM: number): number {
-  if (!Number.isFinite(areaSqM) || areaSqM <= 0) return DEFAULT_CELL_SIZE_M;
-  const widthM = Math.sqrt(areaSqM);
-  const raw = widthM / TARGET_CELLS_ACROSS;
-  // Half-metre steps: the exact figure is a cache key, and an irrational one
-  // would mean every request built a fresh raster.
-  const stepped = Math.round(raw * 2) / 2;
-  return Math.min(DEFAULT_CELL_SIZE_M, Math.max(MIN_CELL_SIZE_M, stepped));
+export interface IndexSpec {
+  key: IndexKey;
+  /** What the agent sees. The index name is for the curious. */
+  label: string;
+  /** What the index measures, one line. */
+  description: string;
+  /**
+   * Zone edges, from the bottom up: below `edges[0]` is critical, below
+   * `edges[1]` moderate, anything else normal. Lower is worse for all three.
+   */
+  edges: readonly [number, number];
 }
 
 /**
- * NDVI band edges, from the bottom up.
+ * The indices and their zone edges.
  *
- * NDVI runs -1..1; healthy vegetated cropland sits around 0.6-0.9, stressed or
- * patchy canopy around 0.3-0.5, and bare soil below about 0.2. These are the
- * conventional break points, and they are deliberately conservative: calling a
- * healthy cell stressed sends an agent on a pointless walk, which is how a tool
- * like this loses its audience.
+ * - **NDVI, crop greenness** - (NIR - Red) / (NIR + Red). Dense healthy canopy
+ *   sits around 0.6-0.85; thin or stressed canopy 0.35-0.55; below about 0.35 is
+ *   sparse crop or bare soil.
+ * - **NDRE, crop vigour** - (NIR - RedEdge) / (NIR + RedEdge). Tracks chlorophyll
+ *   and nitrogen, and saturates later than NDVI in a dense crop. Vigorous crop
+ *   around 0.35-0.55; moderate 0.2-0.35; below 0.2 is low vigour.
+ * - **LSWI, water stress** - (NIR - SWIR) / (NIR + SWIR). Leaf and soil water.
+ *   Well-watered crop around 0.2-0.4; 0.05-0.2 is drying; below 0.05 is water
+ *   stress.
+ *
+ * Edges are conservative on purpose: calling a healthy cell critical sends an
+ * agent on a pointless walk, which is how a tool like this loses its audience.
  */
-export const NDVI_SEVERITY_EDGES = [0.25, 0.4, 0.55] as const;
+export const HEALTH_INDICES: readonly IndexSpec[] = [
+  { key: 'ndvi', label: 'Crop greenness', description: 'NDVI - canopy greenness and density', edges: [0.35, 0.55] },
+  { key: 'ndre', label: 'Crop vigour', description: 'NDRE - chlorophyll and nitrogen status', edges: [0.2, 0.35] },
+  { key: 'lswi', label: 'Water stress', description: 'LSWI - leaf and soil water content', edges: [0.05, 0.2] },
+];
+
+export const INDEX_KEYS: readonly IndexKey[] = HEALTH_INDICES.map((i) => i.key);
+
+export function indexSpec(key: IndexKey): IndexSpec {
+  return HEALTH_INDICES.find((i) => i.key === key)!;
+}
 
 /**
- * The severity type, its labels and its colours now come from the generated
- * palette, so the AR overlay grades a cell exactly the way the map does.
- *
- * Re-exported here rather than moved, because "severity" is a health concept
- * and callers should not have to know it happens to be generated. The ramp
- * itself is edited in palette.json; see tools/gen-palette.mjs.
+ * The zone type, its labels and its colours come from the generated palette,
+ * so the AR overlay grades a cell exactly the way the map does.
  */
 export {
   SEVERITY_COLOURS,
@@ -102,103 +82,102 @@ export {
 } from './palette.js';
 import type { Severity } from './palette.js';
 
-/** A cell is only reported as a hotspot at or above this band. */
-export const HOTSPOT_MIN_SEVERITY: Severity = 2;
+/** 0 normal, 1 moderate, 2 critical. Named for readability at call sites. */
+export const ZONE_NORMAL: Severity = 0;
+export const ZONE_MODERATE: Severity = 1;
+export const ZONE_CRITICAL: Severity = 2;
 
 /**
- * Ignore clusters smaller than this many cells.
+ * A patch needs at least this many touching moderate-or-critical cells.
  *
- * At 10 m cells that is 300 m². Below it, a "hotspot" is as likely to be one
- * noisy pixel as a real problem, and sending someone to stand on it wastes the
- * trip that this whole feature exists to make worthwhile.
+ * At 3 m cells that is 18 m². A single off cell is as likely to be one noisy
+ * pixel as a real problem; two touching ones are a patch worth a drop point.
  */
-export const MIN_HOTSPOT_CELLS = 3;
+export const MIN_PATCH_CELLS = 2;
+
+export type IndexValues = Record<IndexKey, number>;
+export type IndexZones = Record<IndexKey, Severity>;
 
 export interface HealthCell {
   col: number;
   row: number;
-  /** The index value, e.g. NDVI in -1..1. */
-  value: number;
-  severity: Severity;
   centroid_lat: number;
   centroid_lng: number;
-  /** The cell square itself, for drawing. */
+  /** The cell square, trimmed to the boundary, for drawing. */
   cell: Polygon;
+  /** Each index's value at this cell. */
+  values: IndexValues;
+  /** Each index's zone at this cell. */
+  zones: IndexZones;
 }
 
-export interface HealthHotspot {
-  /** 1 is the worst. What the agent is sent to first. */
+/**
+ * A connected patch of moderate or critical cells for one index: what the
+ * field app turns into one drop point.
+ */
+export interface HealthPatch {
+  index: IndexKey;
+  /** 1 is the worst patch for this index. */
   rank: number;
+  /** The patch's worst cell: a patch with a red centre is a red patch. */
+  zone: Severity;
   centroid_lat: number;
   centroid_lng: number;
   cell_count: number;
   area_sq_m: number;
   mean_value: number;
-  severity: Severity;
+}
+
+export interface IndexSummary {
+  key: IndexKey;
+  label: string;
+  edges: readonly [number, number];
+  min: number;
+  max: number;
+  mean: number;
+  /** Cells per zone: [normal, moderate, critical]. */
+  zone_counts: [number, number, number];
 }
 
 export interface HealthSnapshot {
   plot_id: string;
   captured_on: string;
   source: string;
-  index_name: string;
   cell_size_m: number;
   grid_cols: number;
   grid_rows: number;
-  value_min: number;
-  value_max: number;
-  value_mean: number;
+  indices: IndexSummary[];
   cells: HealthCell[];
-  hotspots: HealthHotspot[];
+  patches: HealthPatch[];
 }
 
-/** Samples the index at a position. Real ingest passes a raster reader here. */
+/** Samples one index at a position. Real ingest passes a raster reader here. */
 export type IndexSampler = (lat: number, lng: number) => number;
 
-export function classifySeverity(
-  value: number,
-  edges: readonly number[] = NDVI_SEVERITY_EDGES,
-): Severity {
-  // Lower NDVI is worse, so the bands run downward: below the first edge is
-  // critical, above the last is healthy.
-  if (value < edges[0]!) return 3;
-  if (value < edges[1]!) return 2;
-  if (value < edges[2]!) return 1;
-  return 0;
+export function classifyZone(value: number, edges: readonly [number, number]): Severity {
+  if (value < edges[0]) return ZONE_CRITICAL;
+  if (value < edges[1]) return ZONE_MODERATE;
+  return ZONE_NORMAL;
 }
 
 /**
- * Rasterises a plot into cells and finds the hotspots.
+ * Rasterises a plot into 3 m cells, grades each cell on every index, and
+ * groups the moderate and critical cells into patches.
  *
  * Cells are laid out on a metric grid anchored at the polygon's south-west
- * corner, so they are square on the ground rather than square in degrees - at
- * 12°N a degree of longitude is 108.5 km against 110.5 km for latitude, and a
- * grid built in raw degrees would be visibly rectangular and would report the
- * wrong area per cell.
- *
- * Only cells whose centre falls inside the boundary are kept. That is what makes
- * every hotspot centroid a legal walk-to target: it is the mean of points that
- * are each already inside the plot, and for the convex-ish shapes farm plots
- * actually are, that mean is inside too.
+ * corner, so they are square on the ground rather than square in degrees.
+ * Only cells whose centre falls inside the boundary are kept, which is what
+ * keeps every patch centroid a point inside the plot.
  */
 export function buildHealthSnapshot(options: {
   plotId: string;
   polygon: Polygon;
-  sample: IndexSampler;
+  samplers: Record<IndexKey, IndexSampler>;
   capturedOn: string;
   cellSizeM?: number;
   source?: string;
-  indexName?: string;
 }): HealthSnapshot {
-  const {
-    plotId,
-    polygon,
-    sample,
-    capturedOn,
-    cellSizeM = DEFAULT_CELL_SIZE_M,
-    source = 'synthetic',
-    indexName = 'ndvi',
-  } = options;
+  const { plotId, polygon, samplers, capturedOn, cellSizeM = CELL_SIZE_M, source = 'synthetic' } = options;
 
   const [minLng, minLat, maxLng, maxLat] = polygonBbox(polygon);
   const midLat = (minLat + maxLat) / 2;
@@ -227,74 +206,75 @@ export function buildHealthSnapshot(options: {
         [west, north],
         [west, south],
       ]);
-
-      // Trim the square to the boundary. Keeping a cell because its centre is
-      // inside still leaves up to half of it hanging over the fence, so the
-      // grading bleeds into the neighbour's field - and this overlay's whole
-      // claim is that it describes *this* plot. The intersection is used when
-      // there is one; a cell fully inside comes back unchanged.
+      // Trimmed to the boundary, so no cell's colour bleeds into the
+      // neighbour's field.
       const clipped = clipToBoundary(square, polygon);
       if (!clipped) continue;
 
-      const value = sample(centroidLat, centroidLng);
-      cells.push({
-        col,
-        row,
-        value,
-        severity: classifySeverity(value),
-        centroid_lat: centroidLat,
-        centroid_lng: centroidLng,
-        cell: clipped,
-      });
+      const values = {} as IndexValues;
+      const zones = {} as IndexZones;
+      for (const spec of HEALTH_INDICES) {
+        const value = round3(samplers[spec.key](centroidLat, centroidLng));
+        values[spec.key] = value;
+        zones[spec.key] = classifyZone(value, spec.edges);
+      }
+      cells.push({ col, row, centroid_lat: centroidLat, centroid_lng: centroidLng, cell: clipped, values, zones });
     }
   }
 
-  const values = cells.map((c) => c.value);
   return {
     plot_id: plotId,
     captured_on: capturedOn,
     source,
-    index_name: indexName,
     cell_size_m: cellSizeM,
     grid_cols: cols,
     grid_rows: rows,
-    value_min: values.length ? Math.min(...values) : 0,
-    value_max: values.length ? Math.max(...values) : 0,
-    value_mean: values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0,
+    indices: HEALTH_INDICES.map((spec) => summarise(spec, cells)),
     cells,
-    hotspots: findHotspots(cells, cellSizeM),
+    patches: HEALTH_INDICES.flatMap((spec) => findPatches(cells, spec.key, cellSizeM)),
+  };
+}
+
+function summarise(spec: IndexSpec, cells: HealthCell[]): IndexSummary {
+  const values = cells.map((c) => c.values[spec.key]);
+  const counts: [number, number, number] = [0, 0, 0];
+  for (const c of cells) counts[c.zones[spec.key]]++;
+  return {
+    key: spec.key,
+    label: spec.label,
+    edges: spec.edges,
+    min: values.length ? Math.min(...values) : 0,
+    max: values.length ? Math.max(...values) : 0,
+    mean: values.length ? round3(values.reduce((a, b) => a + b, 0) / values.length) : 0,
+    zone_counts: counts,
   };
 }
 
 /**
- * Groups touching stressed cells into clusters, worst first.
+ * Groups touching moderate-or-critical cells for one index into patches,
+ * worst first.
  *
- * Four-way connectivity, not eight. Diagonal-only neighbours are a single shared
- * corner on the ground; chaining through them merges two separate problems into
- * one hotspot and puts its centroid in the healthy gap between them - a walk-to
- * point that is not a problem at all.
+ * Four-way connectivity, not eight. Diagonal-only neighbours share a single
+ * corner on the ground; chaining through them merges two separate problems and
+ * puts the drop point in the healthy gap between them.
  */
-export function findHotspots(cells: HealthCell[], cellSizeM: number): HealthHotspot[] {
-  const stressed = new Map<string, HealthCell>();
+export function findPatches(cells: HealthCell[], index: IndexKey, cellSizeM: number = CELL_SIZE_M): HealthPatch[] {
+  const flagged = new Map<string, HealthCell>();
   for (const cell of cells) {
-    if (cell.severity >= HOTSPOT_MIN_SEVERITY) stressed.set(`${cell.col},${cell.row}`, cell);
+    if (cell.zones[index] >= ZONE_MODERATE) flagged.set(`${cell.col},${cell.row}`, cell);
   }
 
   const seen = new Set<string>();
   const clusters: HealthCell[][] = [];
-
-  for (const key of stressed.keys()) {
+  for (const key of flagged.keys()) {
     if (seen.has(key)) continue;
     const cluster: HealthCell[] = [];
     const queue = [key];
     seen.add(key);
-
     while (queue.length > 0) {
-      const current = queue.pop()!;
-      const cell = stressed.get(current);
+      const cell = flagged.get(queue.pop()!);
       if (!cell) continue;
       cluster.push(cell);
-
       for (const [dCol, dRow] of [
         [1, 0],
         [-1, 0],
@@ -302,98 +282,97 @@ export function findHotspots(cells: HealthCell[], cellSizeM: number): HealthHots
         [0, -1],
       ] as const) {
         const neighbour = `${cell.col + dCol},${cell.row + dRow}`;
-        if (stressed.has(neighbour) && !seen.has(neighbour)) {
+        if (flagged.has(neighbour) && !seen.has(neighbour)) {
           seen.add(neighbour);
           queue.push(neighbour);
         }
       }
     }
-    if (cluster.length >= MIN_HOTSPOT_CELLS) clusters.push(cluster);
+    if (cluster.length >= MIN_PATCH_CELLS) clusters.push(cluster);
   }
 
   return clusters
     .map((cluster) => {
-      const meanValue = cluster.reduce((sum, c) => sum + c.value, 0) / cluster.length;
+      // The drop point stands on the patch's worst cells, not on its average:
+      // a ring-shaped patch would otherwise put the marker in its healthy
+      // middle.
+      const zone = Math.max(...cluster.map((c) => c.zones[index])) as Severity;
+      const core = cluster.filter((c) => c.zones[index] === zone);
       return {
-        centroid_lat: cluster.reduce((sum, c) => sum + c.centroid_lat, 0) / cluster.length,
-        centroid_lng: cluster.reduce((sum, c) => sum + c.centroid_lng, 0) / cluster.length,
+        index,
+        zone,
+        centroid_lat: core.reduce((sum, c) => sum + c.centroid_lat, 0) / core.length,
+        centroid_lng: core.reduce((sum, c) => sum + c.centroid_lng, 0) / core.length,
         cell_count: cluster.length,
         area_sq_m: cluster.length * cellSizeM * cellSizeM,
-        mean_value: meanValue,
-        // The cluster's band is its worst cell, not its average: a patch with a
-        // dead centre matters more than its edges suggest.
-        severity: Math.max(...cluster.map((c) => c.severity)) as Severity,
+        mean_value: round3(cluster.reduce((sum, c) => sum + c.values[index], 0) / cluster.length),
       };
     })
-    // Worst band first, then largest, then lowest index. Rank is what the field
-    // agent's route is built from, so ties must break deterministically.
-    .sort(
-      (a, b) =>
-        b.severity - a.severity ||
-        b.cell_count - a.cell_count ||
-        a.mean_value - b.mean_value,
-    )
-    .map((hotspot, i) => ({ rank: i + 1, ...hotspot }));
+    // Worst zone first, then largest, then lowest value: deterministic, so the
+    // same plot numbers its drop points the same way every time.
+    .sort((a, b) => b.zone - a.zone || b.cell_count - a.cell_count || a.mean_value - b.mean_value)
+    .map((patch, i) => ({ rank: i + 1, ...patch }));
 }
 
 /**
- * A deterministic stand-in for real satellite imagery.
+ * Demonstration values for all three indices, deterministic per plot.
  *
- * **This is not remote sensing.** It is smooth value noise seeded from the plot
- * id, shaped so a plot has a healthy body with one or two stressed patches -
- * enough to build and demonstrate the whole path from raster to hotspot to a
- * coordinate an agent can walk to. Swapping it for a Sentinel-2 reader means
- * replacing this one function, because everything downstream takes an
- * [IndexSampler] and knows nothing about where the numbers came from.
- *
- * The UI must always label a snapshot built from this as synthetic. Showing a
- * made-up NDVI without saying so is how a demo turns into a wrong agronomic
- * recommendation.
+ * **Not remote sensing.** Smooth noise seeded from the plot id, shaped to look
+ * like a real field: a healthy body with gentle variation, one or two patches
+ * where the canopy thins (NDVI and NDRE fall together, NDRE a little further,
+ * as it does), and a separate dry patch for LSWI that only partly overlaps them -
+ * water stress is not always where the canopy is thin. Swapping in Sentinel-2
+ * means replacing these samplers and nothing else.
  */
-export function syntheticNdviSampler(plotId: string, polygon: Polygon): IndexSampler {
+export function syntheticSamplers(plotId: string, polygon: Polygon): Record<IndexKey, IndexSampler> {
   const seed = hashString(plotId);
   const [minLng, minLat, maxLng, maxLat] = polygonBbox(polygon);
   const spanLng = maxLng - minLng || 1e-6;
   const spanLat = maxLat - minLat || 1e-6;
+  const uv = (lat: number, lng: number) => [(lng - minLng) / spanLng, (lat - minLat) / spanLat] as const;
 
-  // Two stress centres per plot, placed from the seed so the same plot always
-  // has the same problem in the same corner.
-  const blobs = [0, 1].map((i) => ({
-    u: pseudoRandom(seed + i * 97),
-    v: pseudoRandom(seed + i * 131 + 7),
-    radius: 0.16 + 0.14 * pseudoRandom(seed + i * 191 + 13),
-    depth: 0.3 + 0.3 * pseudoRandom(seed + i * 233 + 19),
-  }));
+  const blob = (salt: number, minRadius: number, maxRadius: number) => ({
+    u: 0.15 + 0.7 * pseudoRandom(seed + salt * 97),
+    v: 0.15 + 0.7 * pseudoRandom(seed + salt * 131 + 7),
+    radius: minRadius + (maxRadius - minRadius) * pseudoRandom(seed + salt * 191 + 13),
+    depth: 0.65 + 0.35 * pseudoRandom(seed + salt * 233 + 19),
+  });
+  // Canopy patches drive NDVI and NDRE; the dry patch drives LSWI.
+  const canopy = [blob(1, 0.18, 0.32), blob(2, 0.12, 0.24)];
+  const dry = blob(3, 0.2, 0.34);
+  const dip = (u: number, v: number, b: ReturnType<typeof blob>) => {
+    const d = Math.hypot(u - b.u, v - b.v);
+    if (d >= b.radius) return 0;
+    // Cosine falloff: zones form rings the way a real patch does.
+    return b.depth * (0.5 - 0.5 * Math.cos(Math.PI * (1 - d / b.radius)));
+  };
+  const texture = (u: number, v: number, k: number) =>
+    0.035 * Math.sin(u * 7.3 + seed * 0.011 * k) + 0.03 * Math.cos(v * 6.1 + seed * 0.017 * k);
 
-  return (lat, lng) => {
-    const u = (lng - minLng) / spanLng;
-    const v = (lat - minLat) / spanLat;
+  const thin = (u: number, v: number) => Math.min(1, canopy.reduce((sum, b) => sum + dip(u, v, b), 0));
 
-    // Healthy baseline with gentle large-scale variation.
-    let ndvi =
-      0.74 +
-      0.06 * Math.sin(u * 5.1 + seed * 0.013) +
-      0.05 * Math.cos(v * 4.3 + seed * 0.021);
-
-    for (const blob of blobs) {
-      const d = Math.hypot(u - blob.u, v - blob.v);
-      if (d < blob.radius) {
-        // Cosine falloff: a smooth basin rather than a hard disc, so the
-        // severity bands form rings the way a real stress patch does.
-        const t = 1 - d / blob.radius;
-        ndvi -= blob.depth * (0.5 - 0.5 * Math.cos(Math.PI * t)) * 2;
-      }
-    }
-
-    return Math.max(-0.2, Math.min(0.95, ndvi));
+  return {
+    ndvi: (lat, lng) => {
+      const [u, v] = uv(lat, lng);
+      return clamp(0.72 + texture(u, v, 1) - 0.5 * thin(u, v), 0.08, 0.88);
+    },
+    ndre: (lat, lng) => {
+      const [u, v] = uv(lat, lng);
+      return clamp(0.44 + 0.8 * texture(u, v, 2) - 0.36 * thin(u, v), 0.03, 0.58);
+    },
+    lswi: (lat, lng) => {
+      const [u, v] = uv(lat, lng);
+      return clamp(0.29 + texture(u, v, 3) - 0.32 * dip(u, v, dry) - 0.06 * thin(u, v), -0.15, 0.42);
+    },
   };
 }
 
-/** Total area covered by the reported hotspots, as a share of the plot. */
-export function hotspotAreaFraction(snapshot: HealthSnapshot, polygon: Polygon): number {
-  const plotArea = geodesicAreaSqM(polygon);
-  if (plotArea <= 0) return 0;
-  return snapshot.hotspots.reduce((sum, h) => sum + h.area_sq_m, 0) / plotArea;
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function round3(value: number): number {
+  return Math.round(value * 1000) / 1000;
 }
 
 /**

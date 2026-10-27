@@ -1,17 +1,26 @@
-import { SEVERITY_COLOURS, SEVERITY_LABELS, sqMToHectares, type Severity } from '@plot/shared';
+import {
+  HEALTH_INDICES,
+  SEVERITY_COLOURS,
+  SEVERITY_LABELS,
+  indexSpec,
+  type IndexKey,
+  type Severity,
+} from '@plot/shared';
 import type { PlotHealth } from '../api.js';
 import { formatCoordinate } from '../lib/healthLayer.js';
 
 /**
- * The plot-health toggle, legend, and the ranked list of places to walk to.
+ * Crop condition for the selected plot: which index, its three zones, and the
+ * patches worth walking to.
  *
- * The hotspot list is the deliverable here, not the pretty grid. A coloured
- * raster tells an agronomist there is a problem; a ranked set of coordinates
- * inside the boundary tells a field agent where to stand. Every row is therefore
- * a coordinate first and a statistic second.
+ * Three indices, one reading: each is split into normal, moderate and critical
+ * and drawn green, yellow and red, so an agent reads crop greenness, crop vigour
+ * and water stress the same way. The patch list is the deliverable - a coloured
+ * grid tells an agronomist there is a problem; a ranked list of places inside
+ * the boundary tells a field agent where to stand.
  */
 
-const SEVERITIES: Severity[] = [0, 1, 2, 3];
+const ZONES: Severity[] = [2, 1, 0];
 
 export interface HealthPanelProps {
   enabled: boolean;
@@ -19,8 +28,12 @@ export interface HealthPanelProps {
   plotId: string | null;
   snapshot: PlotHealth | null;
   error: string | null;
+  index: IndexKey;
   onToggle: (enabled: boolean) => void;
-  onFocusHotspot: (lat: number, lng: number) => void;
+  onIndexChange: (index: IndexKey) => void;
+  onFocusPatch: (lat: number, lng: number) => void;
+  /** Hidden on a phone while the draw panel is showing. */
+  className?: string;
 }
 
 export function HealthPanel({
@@ -29,103 +42,90 @@ export function HealthPanel({
   plotId,
   snapshot,
   error,
+  index,
   onToggle,
-  onFocusHotspot,
+  onIndexChange,
+  onFocusPatch,
+  className,
 }: HealthPanelProps) {
+  const spec = indexSpec(index);
+  const summary = snapshot?.indices.find((i) => i.key === index);
+  const patches = snapshot?.patches.filter((p) => p.index === index) ?? [];
+  const total = summary ? summary.zone_counts.reduce((a, b) => a + b, 0) : 0;
+
   return (
-    <section className="health-panel" aria-label="Plot health">
+    <section className={`health-panel ${className ?? ''}`} aria-label="Crop condition">
       <header className="health-panel__head">
         <label className="health-panel__toggle">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(e) => onToggle(e.target.checked)}
-          />
-          <span>Plot health</span>
+          <input type="checkbox" checked={enabled} onChange={(e) => onToggle(e.target.checked)} />
+          <span>Crop condition</span>
         </label>
         {loading && <span className="health-panel__status">loading…</span>}
       </header>
 
-      {!enabled && (
-        <p className="health-panel__hint">
-          Shows an NDVI grid over the selected plot and marks the patches worth
-          visiting.
-        </p>
-      )}
+      <div className="index-switch" role="tablist" aria-label="Index">
+        {HEALTH_INDICES.map((option) => (
+          <button
+            key={option.key}
+            type="button"
+            role="tab"
+            aria-selected={option.key === index}
+            className={option.key === index ? 'is-active' : ''}
+            onClick={() => onIndexChange(option.key)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+      <p className="health-panel__hint">{spec.description}</p>
 
-      {enabled && !plotId && (
-        <p className="health-panel__hint">Click a saved plot on the map to grade it.</p>
-      )}
-
+      {!enabled && <p className="health-panel__hint">Turn on to grade the selected plot in 3 m cells.</p>}
+      {enabled && !plotId && <p className="health-panel__hint">Tap a saved plot on the map to grade it.</p>}
       {enabled && error && <p className="health-panel__error">{error}</p>}
 
-      {enabled && snapshot && (
+      {enabled && snapshot && summary && (
         <>
-          {snapshot.synthetic && (
-            // Never let a fabricated index pass for a measured one. This is the
-            // difference between a demo and a wrong agronomic recommendation.
-            <p className="health-panel__warning">
-              Demo data — synthetic NDVI, not satellite imagery.
-            </p>
-          )}
-
-          <dl className="health-panel__stats">
-            <div>
-              <dt>Plot</dt>
-              <dd>{snapshot.plot_id}</dd>
-            </div>
-            <div>
-              <dt>Cell</dt>
-              <dd>{snapshot.cell_size_m} m</dd>
-            </div>
-            <div>
-              <dt>Mean NDVI</dt>
-              <dd>{snapshot.value_mean.toFixed(2)}</dd>
-            </div>
-          </dl>
+          {snapshot.synthetic && <p className="health-panel__warning">Demo values — not yet from satellite imagery.</p>}
 
           <ul className="health-legend">
-            {SEVERITIES.map((severity) => (
-              <li key={severity}>
-                <span
-                  className="health-legend__swatch"
-                  style={{ background: SEVERITY_COLOURS[severity] }}
-                />
-                {SEVERITY_LABELS[severity]}
-              </li>
-            ))}
+            {ZONES.map((zone) => {
+              const count = summary.zone_counts[zone];
+              const share = total > 0 ? Math.round((count / total) * 100) : 0;
+              return (
+                <li key={zone}>
+                  <span className="health-legend__swatch" style={{ background: SEVERITY_COLOURS[zone] }} />
+                  <span className="health-legend__label">{SEVERITY_LABELS[zone]}</span>
+                  <span className="health-legend__share">{share}%</span>
+                </li>
+              );
+            })}
           </ul>
+          <p className="health-panel__hint">
+            {snapshot.plot_id} · {snapshot.cell_size_m} m cells · mean {spec.key.toUpperCase()} {summary.mean.toFixed(2)}
+          </p>
 
-          <h3 className="health-panel__subhead">
-            Hotspots ({snapshot.hotspots.length})
-          </h3>
-          {snapshot.hotspots.length === 0 ? (
-            <p className="health-panel__hint">
-              Nothing above the stressed threshold — no visit needed.
-            </p>
+          <h3 className="health-panel__subhead">Patches to visit ({patches.length})</h3>
+          {patches.length === 0 ? (
+            <p className="health-panel__hint">No moderate or critical patches for {spec.label.toLowerCase()}.</p>
           ) : (
             <ol className="hotspot-list">
-              {snapshot.hotspots.map((hotspot) => (
-                <li key={hotspot.rank}>
+              {patches.map((patch) => (
+                <li key={patch.rank}>
                   <button
                     type="button"
                     className="hotspot-list__row"
-                    onClick={() => onFocusHotspot(hotspot.centroid_lat, hotspot.centroid_lng)}
+                    onClick={() => onFocusPatch(patch.centroid_lat, patch.centroid_lng)}
                   >
-                    <span
-                      className="hotspot-list__rank"
-                      style={{ background: SEVERITY_COLOURS[hotspot.severity] }}
-                    >
-                      {hotspot.rank}
+                    <span className="hotspot-list__rank" style={{ background: SEVERITY_COLOURS[patch.zone] }}>
+                      {patch.rank}
                     </span>
                     <span className="hotspot-list__body">
                       <span className="hotspot-list__coord">
-                        {formatCoordinate(hotspot.centroid_lat, hotspot.centroid_lng)}
+                        {formatCoordinate(patch.centroid_lat, patch.centroid_lng)}
                       </span>
                       <span className="hotspot-list__meta">
-                        {SEVERITY_LABELS[hotspot.severity]} ·{' '}
-                        {sqMToHectares(hotspot.area_sq_m).toFixed(2)} ha · NDVI{' '}
-                        {hotspot.mean_value.toFixed(2)}
+                        {SEVERITY_LABELS[patch.zone]} · {Math.round(patch.area_sq_m)} m² ·{' '}
+                        {spec.key.toUpperCase()} {patch.mean_value.toFixed(2)}
                       </span>
                     </span>
                   </button>

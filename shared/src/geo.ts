@@ -101,8 +101,6 @@ export function plotToFeature(plot: Plot): Feature<Polygon> {
       area_ha: sqMToHectares(plot.area_sq_m),
       centroid_lat: plot.centroid_lat,
       centroid_lng: plot.centroid_lng,
-      access_lat: plot.access_lat,
-      access_lng: plot.access_lng,
       landmark_note: plot.landmark_note,
       created_at: plot.created_at,
     },

@@ -30,8 +30,6 @@ interface PlotApiRow {
   polygon: Polygon;
   centroid_lat: number;
   centroid_lng: number;
-  access_lat: number;
-  access_lng: number;
   area_sq_m: number;
   landmark_note: string;
   colour_index: number;
@@ -50,8 +48,6 @@ function rowToPlot(row: PlotApiRow): Plot {
     polygon: row.polygon,
     centroid_lat: row.centroid_lat,
     centroid_lng: row.centroid_lng,
-    access_lat: row.access_lat,
-    access_lng: row.access_lng,
     area_sq_m: row.area_sq_m,
     landmark_note: row.landmark_note,
     colour_index: row.colour_index,
@@ -81,7 +77,7 @@ export class SupabasePlotStore implements PlotStore {
     if (error) {
       throw new Error(
         `Supabase is reachable but public.fieldar_plots is missing (${error.message}). ` +
-          'Run api/sql/001_fieldar_schema.sql then api/sql/002_api_surface.sql.',
+          'Run service/sql/001_fieldar_schema.sql, 002_api_surface.sql and 003_updated_flow.sql in order.',
       );
     }
   }
@@ -94,8 +90,6 @@ export class SupabasePlotStore implements PlotStore {
           p_id: id,
           p_name: value.name,
           p_polygon: value.polygon,
-          p_access_lat: value.access_lat,
-          p_access_lng: value.access_lng,
           p_area_sq_m: value.area_sq_m,
           p_landmark_note: value.landmark_note,
         })

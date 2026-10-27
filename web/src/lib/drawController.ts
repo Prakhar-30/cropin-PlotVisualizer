@@ -3,11 +3,10 @@ import {
   isSimplePolygon,
   perimeterM,
   ringToPolygon,
-  type LngLat,
   type Polygon,
   type Position,
 } from '@plot/shared';
-import maplibregl, { type GeoJSONSource, type Map as MapLibreMap, type MapMouseEvent } from 'maplibre-gl';
+import { type GeoJSONSource, type Map as MapLibreMap, type MapMouseEvent } from 'maplibre-gl';
 import { MapOverlay } from './mapOverlay.js';
 
 /**
@@ -18,6 +17,10 @@ import { MapOverlay } from './mapOverlay.js';
  *   double-click     close the polygon
  *   drag a vertex    move it
  *   right-click      delete a vertex
+ *
+ * On a touch screen there is no right-click and a double-tap is easy to miss,
+ * so the panel also offers "Undo corner" and "Close shape" buttons, which call
+ * [undoLast] and [close].
  */
 
 export type DrawMode =
@@ -25,9 +28,7 @@ export type DrawMode =
   | 'idle'
   /** Placing or adjusting vertices. */
   | 'drawing'
-  /** Polygon closed; waiting for the agent to drop the access point. */
-  | 'awaiting-access'
-  /** Polygon closed and access point placed. */
+  /** Polygon closed; ready to name and save. */
   | 'ready';
 
 export interface DrawState {
@@ -35,7 +36,6 @@ export interface DrawState {
   /** Open ring - the closing repeat is added only when a polygon is built. */
   vertices: Position[];
   closed: boolean;
-  access: LngLat | null;
   /** Live measurements, valid once there are three or more vertices. */
   areaSqM: number;
   perimeterM: number;
@@ -66,7 +66,6 @@ export class PlotDrawController extends MapOverlay {
   private vertices: Position[] = [];
   private closed = false;
   private mode: DrawMode = 'idle';
-  private accessMarker: maplibregl.Marker | null = null;
   private dragIndex: number | null = null;
 
   constructor(map: MapLibreMap, onChange: (state: DrawState) => void) {
@@ -82,11 +81,6 @@ export class PlotDrawController extends MapOverlay {
 
   protected sourceIds(): string[] {
     return [SRC_VERTICES, SRC_SHAPE];
-  }
-
-  protected override releaseExtras(): void {
-    this.accessMarker?.remove();
-    this.accessMarker = null;
   }
 
   /* ------------------------------------------------------------- lifecycle */
@@ -150,8 +144,6 @@ export class PlotDrawController extends MapOverlay {
     this.vertices = [];
     this.closed = false;
     this.mode = 'drawing';
-    this.accessMarker?.remove();
-    this.accessMarker = null;
     this.render();
   }
 
@@ -167,19 +159,23 @@ export class PlotDrawController extends MapOverlay {
     return ringToPolygon(this.vertices);
   }
 
-  getAccessPoint(): LngLat | null {
-    if (!this.accessMarker) return null;
-    const { lng, lat } = this.accessMarker.getLngLat();
-    return [lng, lat];
+  /** Removes the most recent corner, re-opening a closed shape if needed. */
+  undoLast(): void {
+    if (this.vertices.length === 0) return;
+    this.vertices.pop();
+    if (this.vertices.length < 3) this.closed = false;
+    if (!this.closed && this.mode !== 'idle') this.mode = 'drawing';
+    this.render();
+  }
+
+  /** Closes the ring, as a double-click does. */
+  close(): void {
+    this.onDoubleClick();
   }
 
   /* -------------------------------------------------------------- handlers */
 
   private onClick(e: MapMouseEvent): void {
-    if (this.mode === 'awaiting-access') {
-      this.placeAccessMarker([e.lngLat.lng, e.lngLat.lat]);
-      return;
-    }
     if (this.mode !== 'drawing' || this.closed) return;
     if (this.isOnLastVertex(e)) return;
     this.vertices.push([e.lngLat.lng, e.lngLat.lat]);
@@ -202,7 +198,7 @@ export class PlotDrawController extends MapOverlay {
   private onDoubleClick(): void {
     if (this.mode !== 'drawing' || this.closed || this.vertices.length < 3) return;
     this.closed = true;
-    this.mode = 'awaiting-access';
+    this.mode = 'ready';
     this.render();
   }
 
@@ -247,19 +243,6 @@ export class PlotDrawController extends MapOverlay {
     return typeof index === 'number' ? index : null;
   }
 
-  private placeAccessMarker(at: LngLat): void {
-    if (this.accessMarker) {
-      this.accessMarker.setLngLat(at);
-    } else {
-      this.accessMarker = new maplibregl.Marker({ draggable: true, color: '#f59e0b' })
-        .setLngLat(at)
-        .addTo(this.map);
-      this.accessMarker.on('dragend', () => this.render());
-    }
-    this.mode = 'ready';
-    this.render();
-  }
-
   /* ---------------------------------------------------------------- render */
 
   private render(): void {
@@ -298,7 +281,6 @@ export class PlotDrawController extends MapOverlay {
       mode: this.mode,
       vertices: [...vertices],
       closed,
-      access: this.getAccessPoint(),
       areaSqM: polygon ? geodesicAreaSqM(polygon) : 0,
       perimeterM: polygon ? perimeterM(polygon) : 0,
       selfIntersecting,
@@ -310,7 +292,6 @@ export const emptyDrawState: DrawState = {
   mode: 'idle',
   vertices: [],
   closed: false,
-  access: null,
   areaSqM: 0,
   perimeterM: 0,
   selfIntersecting: false,

@@ -1,0 +1,26 @@
+name: ci
+
+# Typecheck every workspace, run the API tests, and build the web app on each
+# push, so a change to the shared model cannot quietly break the API or the map.
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node tools/gen-palette.mjs --check
+      - run: npm run typecheck
+      - run: npm run test:api
+      - run: npm run build -w @plot/web

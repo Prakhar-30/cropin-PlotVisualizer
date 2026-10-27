@@ -27,8 +27,8 @@ export const PLOT_ALPHA = {
   outline: 0.95,
 } as const;
 
-/** Crop-health severity band. 0 is healthy, 3 is critical. */
-export type Severity = 0 | 1 | 2 | 3;
+/** Crop-condition zone. 0 is normal, 1 moderate, 2 critical. */
+export type Severity = 0 | 1 | 2;
 
 /**
  * The severity ramp, shared with the AR overlay through palette.json.
@@ -38,16 +38,14 @@ export type Severity = 0 | 1 | 2 | 3;
  */
 export const SEVERITY_COLOURS: Record<Severity, string> = {
   0: '#2fd44e',
-  1: '#ffe81a',
-  2: '#ff8a00',
-  3: '#ff2118',
+  1: '#ffd60a',
+  2: '#ff2118',
 };
 
 export const SEVERITY_LABELS: Record<Severity, string> = {
-  0: 'Healthy',
-  1: 'Mild',
-  2: 'Stressed',
-  3: 'Critical',
+  0: 'Normal',
+  1: 'Moderate',
+  2: 'Critical',
 };
 
 /**
@@ -59,10 +57,9 @@ export const SEVERITY_LABELS: Record<Severity, string> = {
  * which hides exactly the contrast the layer exists to show.
  */
 export const SEVERITY_FILL_ALPHA: Record<Severity, number> = {
-  0: 0.22,
-  1: 0.55,
-  2: 0.68,
-  3: 0.8,
+  0: 0.25,
+  1: 0.6,
+  2: 0.8,
 };
 
 /**

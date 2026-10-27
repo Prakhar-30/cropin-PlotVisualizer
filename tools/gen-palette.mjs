@@ -50,8 +50,8 @@ export const PLOT_ALPHA = {
   outline: ${alpha.outline},
 } as const;
 
-/** Crop-health severity band. 0 is healthy, 3 is critical. */
-export type Severity = 0 | 1 | 2 | 3;
+/** Crop-condition zone. 0 is normal, 1 moderate, 2 critical. */
+export type Severity = 0 | 1 | 2;
 
 /**
  * The severity ramp, shared with the AR overlay through palette.json.

@@ -2,7 +2,6 @@ import {
   formatAcres,
   formatDistance,
   formatHectares,
-  formatLatLng,
   MAX_PLOT_AREA_HA,
   ringToPolygon,
   validatePlotInput,
@@ -21,14 +20,17 @@ interface Props {
   onNoteChange: (value: string) => void;
   onStartNew: () => void;
   onClear: () => void;
+  onUndo: () => void;
+  onClose: () => void;
   onSave: () => void;
+  /** Hidden on a phone while the health panel is showing. */
+  className?: string;
 }
 
 const HINTS: Record<DrawState['mode'], string> = {
   idle: 'Press "New plot", then click on the map to place the first corner.',
-  drawing: 'Click to add corners. Double-click to close. Drag a corner to move it, right-click to delete it.',
-  'awaiting-access': 'Now click the access point — where someone walks or drives in from the road.',
-  ready: 'Fill in the name and landmark note, then save.',
+  drawing: 'Tap or click to add corners, then Close shape (or double-click). Drag a corner to move it.',
+  ready: 'Fill in the name and an optional landmark note, then save.',
 };
 
 /**
@@ -37,14 +39,11 @@ const HINTS: Record<DrawState['mode'], string> = {
  */
 function blockers(state: DrawState, name: string, note: string): string[] {
   if (state.vertices.length === 0) return ['Draw the plot boundary'];
-  if (!state.closed) return ['Double-click to close the polygon'];
-  if (!state.access) return ['Place the access point'];
+  if (!state.closed) return ['Close the shape'];
 
   const result = validatePlotInput({
     name,
     polygon: ringToPolygon(state.vertices),
-    access_lng: state.access[0],
-    access_lat: state.access[1],
     landmark_note: note,
   });
   return result.ok ? [] : result.errors;
@@ -56,7 +55,7 @@ export function DrawPanel(props: Props) {
   const problems = blockers(state, name, note);
 
   return (
-    <aside className="panel">
+    <aside className={`panel ${props.className ?? ''}`}>
       <header className="panel-header">
         <h1>Mark a plot</h1>
         <p className="hint">{HINTS[state.mode]}</p>
@@ -96,17 +95,6 @@ export function DrawPanel(props: Props) {
       </div>
 
       <div className="field">
-        <label htmlFor="access-point">
-          Access point <span className="required">required</span>
-        </label>
-        <output id="access-point" className="readout">
-          {state.access
-            ? formatLatLng(state.access[1], state.access[0])
-            : 'Not placed — close the polygon, then click the road entry'}
-        </output>
-      </div>
-
-      <div className="field">
         <label htmlFor="landmark">Landmark note</label>
         <textarea
           id="landmark"
@@ -131,6 +119,17 @@ export function DrawPanel(props: Props) {
           Saved <strong>{saved.id}</strong> — {formatHectares(saved.area_sq_m)} (recomputed by the
           server, limit {MAX_PLOT_AREA_HA} ha)
         </p>
+      )}
+
+      {state.mode === 'drawing' && (
+        <div className="actions">
+          <button type="button" className="ghost" disabled={state.vertices.length === 0} onClick={props.onUndo}>
+            Undo corner
+          </button>
+          <button type="button" disabled={state.vertices.length < 3} onClick={props.onClose}>
+            Close shape
+          </button>
+        </div>
       )}
 
       <div className="actions">

@@ -93,7 +93,7 @@ plotsRouter.get('/:id', async (req, res, next) => {
   }
 });
 
-// GET /api/plots/:id/health - the pixelated health raster and its hotspots.
+// GET /api/plots/:id/health - 3 m crop-condition cells on three indices, and their patches.
 plotsRouter.use('/:id/health', healthRouter);
 
 /** GET /api/plots/:id/geojson - a bare Feature, for eyeballing in geojson.io. */

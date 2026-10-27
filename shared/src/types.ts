@@ -10,9 +10,6 @@ export interface Plot {
   polygon: Polygon;
   centroid_lat: number;
   centroid_lng: number;
-  /** Where someone walks or drives in from the road. */
-  access_lat: number;
-  access_lng: number;
   /** Geodesic, recomputed server-side on save. */
   area_sq_m: number;
   landmark_note: string;
@@ -28,8 +25,6 @@ export interface Plot {
 export interface PlotInput {
   name: string;
   polygon: Polygon;
-  access_lat: number;
-  access_lng: number;
   landmark_note?: string;
 }
 
