@@ -1,10 +1,10 @@
-import { SEVERITY_COLOURS, SEVERITY_LABELS, type Severity } from '@plot/shared';
+import { SEVERITY_COLOURS, SEVERITY_LABELS, type IndexKey } from '@plot/shared';
 import maplibregl, { type GeoJSONSource, type Map as MapLibreMap } from 'maplibre-gl';
 import type { PlotHealth } from '../api.js';
 import { MapOverlay } from './mapOverlay.js';
 
 /**
- * The pixelated plot-health overlay and its hotspot pins.
+ * The crop-condition overlay for one index, and its patch pins.
  *
  * Cells are drawn as real polygons rather than as a raster image so that they
  * stay geographically registered at every zoom - the point of the feature is
@@ -94,8 +94,11 @@ export class PlotHealthLayer extends MapOverlay {
     this.pins = [];
   }
 
-  /** Draws a snapshot, or clears the overlay when passed `null`. */
-  setSnapshot(snapshot: PlotHealth | null): void {
+  /**
+   * Draws one index of a snapshot - every cell in its zone colour, and a pin on
+   * each moderate or critical patch - or clears the overlay when passed `null`.
+   */
+  setSnapshot(snapshot: PlotHealth | null, index: IndexKey = 'ndvi'): void {
     if (!snapshot) {
       this.clear();
       return;
@@ -107,18 +110,19 @@ export class PlotHealthLayer extends MapOverlay {
         type: 'Feature' as const,
         geometry: cell.cell,
         properties: {
-          value: cell.value,
-          severity: cell.severity,
-          colour: SEVERITY_COLOURS[cell.severity],
-          label: SEVERITY_LABELS[cell.severity],
+          value: cell.values[index],
+          zone: cell.zones[index],
+          colour: SEVERITY_COLOURS[cell.zones[index]],
+          label: SEVERITY_LABELS[cell.zones[index]],
           coordinate: formatCoordinate(cell.centroid_lat, cell.centroid_lng),
         },
       })),
     });
 
+    const patches = snapshot.patches.filter((p) => p.index === index);
     (this.map.getSource(SRC_HOTSPOTS) as GeoJSONSource | undefined)?.setData({
       type: 'FeatureCollection',
-      features: snapshot.hotspots.map((hotspot) => ({
+      features: patches.map((hotspot) => ({
         type: 'Feature' as const,
         geometry: {
           type: 'Point' as const,
@@ -129,10 +133,10 @@ export class PlotHealthLayer extends MapOverlay {
     });
 
     this.releaseExtras();
-    this.pins = snapshot.hotspots.map((hotspot) => {
+    this.pins = patches.map((hotspot) => {
       const el = document.createElement('div');
       el.className = 'hotspot-pin';
-      el.style.setProperty('--hotspot-colour', SEVERITY_COLOURS[hotspot.severity as Severity]);
+      el.style.setProperty('--hotspot-colour', SEVERITY_COLOURS[hotspot.zone]);
 
       const rank = document.createElement('span');
       rank.className = 'hotspot-pin__rank';

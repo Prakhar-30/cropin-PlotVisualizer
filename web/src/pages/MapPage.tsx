@@ -1,4 +1,4 @@
-import { type Plot } from '@plot/shared';
+import { type IndexKey, type Plot } from '@plot/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, ApiRequestError, type PlotHealth } from '../api.js';
@@ -33,6 +33,9 @@ export function MapPage() {
   const [health, setHealth] = useState<PlotHealth | null>(null);
   const [healthLoading, setHealthLoading] = useState(false);
   const [healthError, setHealthError] = useState<string | null>(null);
+  const [healthIndex, setHealthIndex] = useState<IndexKey>('ndvi');
+  /** On a phone only one panel fits; this says which. Ignored on a desktop. */
+  const [mobilePanel, setMobilePanel] = useState<'draw' | 'health'>('health');
 
   const refreshPlots = useCallback(async () => {
     try {
@@ -117,7 +120,6 @@ export function MapPage() {
       .then((snapshot) => {
         if (cancelled) return;
         setHealth(snapshot);
-        healthLayer.current?.setSnapshot(snapshot);
       })
       .catch((err: ApiRequestError) => {
         if (!cancelled) setHealthError(err.fullMessage);
@@ -130,14 +132,15 @@ export function MapPage() {
     };
   }, [healthOn, focusId]);
 
+  // One fetch carries all three indices; switching index only redraws.
   useEffect(() => {
+    healthLayer.current?.setSnapshot(health, healthIndex);
     healthLayer.current?.setVisible(healthOn);
-  }, [healthOn, health]);
+  }, [healthOn, health, healthIndex]);
 
   const handleSave = async () => {
     const polygon = controller.current?.toPolygon();
-    const access = controller.current?.getAccessPoint();
-    if (!polygon || !access) return;
+    if (!polygon) return;
 
     setSaving(true);
     setError(null);
@@ -145,8 +148,6 @@ export function MapPage() {
       const plot = await api.createPlot({
         name,
         polygon,
-        access_lng: access[0],
-        access_lat: access[1],
         landmark_note: note,
       });
       setSaved(plot);
@@ -187,16 +188,40 @@ export function MapPage() {
           });
         }}
       />
+      <div className="mobile-tabs" role="tablist" aria-label="Panel">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mobilePanel === 'health'}
+          className={mobilePanel === 'health' ? 'is-active' : ''}
+          onClick={() => setMobilePanel('health')}
+        >
+          Crop condition
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mobilePanel === 'draw'}
+          className={mobilePanel === 'draw' ? 'is-active' : ''}
+          onClick={() => setMobilePanel('draw')}
+        >
+          Mark a plot
+        </button>
+      </div>
       <HealthPanel
+        className={mobilePanel === 'health' ? '' : 'is-mobile-hidden'}
         enabled={healthOn}
         loading={healthLoading}
         plotId={focusId}
         snapshot={health}
         error={healthError}
+        index={healthIndex}
         onToggle={setHealthOn}
-        onFocusHotspot={(lat, lng) => map?.flyTo({ center: [lng, lat], zoom: 19, duration: 700 })}
+        onIndexChange={setHealthIndex}
+        onFocusPatch={(lat, lng) => map?.flyTo({ center: [lng, lat], zoom: 19, duration: 700 })}
       />
       <DrawPanel
+        className={mobilePanel === 'draw' ? '' : 'is-mobile-hidden'}
         state={drawState}
         name={name}
         note={note}
@@ -205,6 +230,8 @@ export function MapPage() {
         saved={saved}
         onNameChange={setName}
         onNoteChange={setNote}
+        onUndo={() => controller.current?.undoLast()}
+        onClose={() => controller.current?.close()}
         onStartNew={() => {
           setSaved(null);
           setError(null);

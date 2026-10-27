@@ -1,7 +1,9 @@
 # Plot Visualizer
 
-Draw farm plot boundaries on satellite imagery, grade plot health, and serve both
-to the companion Android AR app that finds those boundaries in the field.
+Draw farm plot boundaries on satellite imagery, grade crop condition - crop
+greenness (NDVI), crop vigour (NDRE) and water stress (LSWI) - in 3 m cells, and
+serve both to the companion Android AR app that shows every nearby plot and its
+problem patches in the field.
 
 This repository is the web half. Boundaries are created **here and only here** —
 the mobile app is a reader.
@@ -19,7 +21,7 @@ api/[...path].ts              Vercel Function; wraps the same Express app
 
 ```bash
 npm install
-npm run seed        # 6 adjacent plots near Bellur, Karnataka
+npm run seed        # 6 adjacent ~0.17 ha plots near Bellur, Karnataka
 npm run dev:api     # :4000 — prints the LAN address a phone should use
 npm run dev:web     # :5173
 ```
@@ -39,9 +41,12 @@ Run these against your Supabase project, in order, in the SQL editor:
 |------|--------------|
 | `service/sql/001_fieldar_schema.sql` | Tables, indexes, RLS, and the `?near=` function, all inside a `fieldar` schema |
 | `service/sql/002_api_surface.sql` | The `public.fieldar_*` wrappers PostgREST actually serves |
+| `service/sql/003_updated_flow.sql` | **Wipes every plot**, removes the access point, narrows zones to three |
 
-Both are idempotent and additive. Neither contains a `DROP TABLE`, `TRUNCATE`,
-or `DELETE`, so running them on a project that already has tables is safe.
+001 and 002 are idempotent and additive. **003 is destructive on purpose**: the
+updated flow starts from a clean slate, so it deletes all plots (and their stored
+health) before dropping the `access_point` column. Run it once, in one go - it is
+a single transaction.
 
 `002` exists because PostgREST only serves schemas listed under *Exposed
 schemas*, which defaults to `public`. Publishing thin wrappers there means the
@@ -117,19 +122,36 @@ every boundary someone drew is gone.
 
 ---
 
-## Plot health
+## Crop condition
 
-The `Plot health` toggle grades the selected plot into a 10 m NDVI grid and ranks
-the contiguous stressed patches, each with a coordinate that is guaranteed to
-fall inside the boundary — the field agent reads it off the screen, or clicks to
-copy it, and walks there.
+Each plot is graded in fixed **3 m cells** on three indices, each split into the
+same three zones so they read the same way:
 
-**The index values are synthetic.** `syntheticNdviSampler` is deterministic
-noise shaped to look like a real stress pattern, not remote sensing. Every API
-response carries `synthetic: true` and the UI shows an amber warning, because a
-fabricated NDVI presented as a measured one is a wrong agronomic recommendation.
-Wiring real Sentinel-2 means replacing one function — everything downstream takes
-an `IndexSampler` and knows nothing about where the numbers came from.
+| Index | Shown as | Critical (red) | Moderate (yellow) | Normal (green) |
+|---|---|---|---|---|
+| NDVI | Crop greenness | < 0.35 | 0.35 – 0.55 | ≥ 0.55 |
+| NDRE | Crop vigour | < 0.20 | 0.20 – 0.35 | ≥ 0.35 |
+| LSWI | Water stress | < 0.05 | 0.05 – 0.20 | ≥ 0.20 |
+
+`GET /api/plots/:id/health` returns every cell with all three values and zones,
+a per-index summary, and the **patches**: touching moderate-or-critical cells
+(at least two), one per patch, ranked worst first per index. The field app turns
+each patch into one drop point. The map shows one index at a time - switch with
+the Crop greenness / Crop vigour / Water stress tabs.
+
+**The values are demonstration values.** `syntheticSamplers` is deterministic per
+plot and shaped like a real field: a healthy body, one or two patches where the
+canopy thins (NDVI and NDRE fall together), and a separate dry patch for LSWI.
+Every response carries `synthetic: true` and the map says so. Wiring real
+Sentinel-2 means replacing those samplers - nothing downstream knows where the
+numbers came from.
+
+There is no access point any more: the field app anchors on the nearest point of
+a plot's boundary.
+
+The map works on a phone: below 720 px the side panels become one bottom sheet
+with a tab bar, and drawing has *Undo corner* and *Close shape* buttons in place
+of right-click and double-click.
 
 ---
 
@@ -137,7 +159,7 @@ an `IndexSampler` and knows nothing about where the numbers came from.
 
 ```bash
 npm run typecheck   # shared, api, web
-npm run test:api    # 16 end-to-end tests against the real Express app
+npm run test:api    # end-to-end tests against the real Express app
 npm run build
 ```
 

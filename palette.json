@@ -3,8 +3,8 @@
     "The plot palette. Single source of truth for both projects.",
     "",
     "Edit THIS file, then run tools/gen-palette.mjs, which regenerates",
-    "plot-web/shared/src/palette.ts and the Kotlin PlotPalette.kt. Neither",
-    "generated file should be edited by hand.",
+    "plot-web/shared/src/palette.ts (and the Kotlin PlotPalette.kt when that",
+    "sibling checkout exists). The Flutter app's plot_palette.dart mirrors it by hand.",
     "",
     "A plot's colour_index (0-7) is assigned by fieldar.pick_colour_index() so",
     "that no two plots within 500 m share a slot. Colours are chosen to survive",
@@ -66,50 +66,37 @@
   },
   "health": {
     "$comment": [
-      "Crop-health severity ramp, shared by the web map and the AR overlay.",
+      "Crop-condition zones, shared by the web map and the AR overlay.",
+      "",
+      "Three zones per index - normal, moderate, critical - in green, yellow and red.",
+      "The same three zones are used for every index (crop greenness / NDVI, crop",
+      "vigour / NDRE, water stress / LSWI), so an agent reads all three the same way.",
       "",
       "Kept apart from the plot palette above on purpose: that palette answers",
-      "'which plot is this', this one answers 'how is the crop doing'.",
+      "'which plot is this', this one answers 'how is the crop doing'. Red does",
+      "collide with plot slot 0; the two never share a surface - plot colour is a",
+      "standing wall and rail, a zone is a patch on the ground or a drop point.",
       "",
-      "Colours and alphas both raised after the first field test. The original ramp",
-      "ran green-yellow-amber-brown, chosen so the bad end described the ground",
-      "rather than alarming about it. Outdoors that reasoning failed on its own",
-      "terms: amber and brown ARE the colour of dry soil, so the two worst bands",
-      "were painting earth-colour onto earth and disappearing completely. A grading",
-      "layer has to contrast with the ground it grades, not match it.",
-      "",
-      "So the bad end is now red. That does collide with plot slot 0, and the",
-      "collision is accepted rather than overlooked: the two never share a surface -",
-      "plot colour is a standing wall and a rail against the sky, severity is a flat",
-      "patch on the ground - and only one plot in eight draws in slot 0 at all.",
-      "",
-      "fillAlpha still rises with severity, but from a much higher floor. Healthy",
-      "stays the faintest: it is context, and must not paint over the crop."
+      "Normal stays the faintest fill: it is context, and the field app does not",
+      "draw it at all - only moderate and critical become drop points."
     ],
     "severity": [
       {
         "level": 0,
-        "name": "healthy",
-        "label": "Healthy",
+        "name": "normal",
+        "label": "Normal",
         "hex": "#2FD44E",
-        "fillAlpha": 0.22
+        "fillAlpha": 0.25
       },
       {
         "level": 1,
-        "name": "mild",
-        "label": "Mild",
-        "hex": "#FFE81A",
-        "fillAlpha": 0.55
+        "name": "moderate",
+        "label": "Moderate",
+        "hex": "#FFD60A",
+        "fillAlpha": 0.6
       },
       {
         "level": 2,
-        "name": "stressed",
-        "label": "Stressed",
-        "hex": "#FF8A00",
-        "fillAlpha": 0.68
-      },
-      {
-        "level": 3,
         "name": "critical",
         "label": "Critical",
         "hex": "#FF2118",

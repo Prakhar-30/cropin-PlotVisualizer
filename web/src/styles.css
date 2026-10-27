@@ -626,3 +626,130 @@ button:disabled {
   text-decoration: underline;
   cursor: pointer;
 }
+
+/* ---------------------------------------------------------- index switch */
+
+.index-switch {
+  display: flex;
+  gap: 4px;
+  margin: 10px 0 4px;
+  padding: 3px;
+  border-radius: 8px;
+  background: rgba(11, 15, 20, 0.6);
+  border: 1px solid var(--panel-edge);
+}
+
+.index-switch button {
+  flex: 1 1 0;
+  padding: 6px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.index-switch button.is-active {
+  background: var(--panel-edge);
+  color: var(--text);
+}
+
+.health-legend__label {
+  color: var(--text);
+}
+
+.health-legend__share {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Desktop shows both panels at once; the tab bar is for phones only. */
+.mobile-tabs {
+  display: none;
+}
+
+/* ------------------------------------------------------------ mobile layout */
+/*
+ * On a phone the two side panels would cover the map entirely. Instead they
+ * become one bottom sheet with a tab bar above it, the search and locate
+ * controls span the width at the top, and the map keeps the middle.
+ */
+@media (max-width: 720px) {
+  .search-box,
+  .locate {
+    left: 8px;
+    right: 8px;
+    width: auto;
+  }
+
+  .search-box {
+    top: 8px;
+  }
+
+  .locate {
+    top: 54px;
+  }
+
+  .mobile-tabs {
+    display: flex;
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    bottom: calc(42vh + 14px);
+    z-index: 3;
+    gap: 4px;
+    padding: 3px;
+    border-radius: 10px;
+    background: rgba(18, 24, 33, 0.95);
+    border: 1px solid var(--panel-edge);
+  }
+
+  .mobile-tabs button {
+    flex: 1 1 0;
+    padding: 8px 6px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 13px;
+  }
+
+  .mobile-tabs button.is-active {
+    background: var(--panel-edge);
+    color: var(--text);
+  }
+
+  .panel,
+  .health-panel {
+    top: auto;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: auto;
+    max-height: 42vh;
+    padding: 12px;
+  }
+
+  .is-mobile-hidden {
+    display: none;
+  }
+
+  .actions button {
+    min-height: 40px;
+  }
+
+  .hotspot-pin__coord {
+    display: none;
+  }
+
+  .page {
+    padding: 12px;
+    overflow-x: auto;
+  }
+
+  .plots-table {
+    font-size: 12px;
+  }
+}
