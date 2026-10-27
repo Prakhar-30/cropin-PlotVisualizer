@@ -136,8 +136,17 @@ same three zones so they read the same way:
 `GET /api/plots/:id/health` returns every cell with all three values and zones,
 a per-index summary, and the **patches**: touching moderate-or-critical cells
 (at least two), one per patch, ranked worst first per index. The field app turns
-each patch into one drop point. The map shows one index at a time - switch with
-the Crop greenness / Crop vigour / Water stress tabs.
+each patch into one drop point. The map grades **every saved plot at once**
+(the *Crop condition* toggle is on by default): the moderate and critical cells
+of the chosen index are painted yellow and red across all plots, each patch is a
+drop point (click it for plot, zone, area and coordinate), and normal ground is
+left unpainted, as in the camera. Switch the index with the Crop greenness /
+Crop vigour / Water stress tabs; the panel sums the zones over every graded plot
+and lists the drop points worst first.
+
+Plots can be deleted from the Plots page or from the map (tap a plot, then
+*Delete plot* in the Mark a plot panel). On Supabase this needs
+`service/sql/004_delete_plot.sql`.
 
 **The values are demonstration values.** `syntheticSamplers` is deterministic per
 plot and shaped like a real field: a healthy body, one or two patches where the
