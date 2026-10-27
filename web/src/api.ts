@@ -74,6 +74,10 @@ export const api = {
   getPlotHealth: (id: string) =>
     request<PlotHealth>(`/plots/${encodeURIComponent(id)}/health`),
 
+  /** Removes the plot and its crop-condition snapshots. Cannot be undone. */
+  deletePlot: (id: string) =>
+    request<{ deleted: string }>(`/plots/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
   createPlot: (input: PlotInput) =>
     request<Plot>('/plots', {
       method: 'POST',

@@ -27,6 +27,7 @@ export function MapPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<Plot | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [healthOn, setHealthOn] = useState(false);
@@ -162,6 +163,24 @@ export function MapPage() {
     }
   };
 
+  const selectedPlot = plots.find((p) => p.id === focusId) ?? null;
+
+  const handleDelete = async (plot: Plot) => {
+    if (!window.confirm(`Delete ${plot.id} "${plot.name}"? This cannot be undone.`)) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      await api.deletePlot(plot.id);
+      if (saved?.id === plot.id) setSaved(null);
+      setSearchParams({});
+      await refreshPlots();
+    } catch (err) {
+      setError((err as ApiRequestError).fullMessage);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <div className="map-page">
       <div ref={containerRef} className="map" />
@@ -243,6 +262,9 @@ export function MapPage() {
           controller.current?.reset();
         }}
         onSave={handleSave}
+        selected={selectedPlot}
+        deleting={deleting}
+        onDelete={(plot) => void handleDelete(plot)}
       />
     </div>
   );

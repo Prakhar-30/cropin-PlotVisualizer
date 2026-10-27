@@ -366,3 +366,21 @@ test('health is deterministic per plot, and 404s for an unknown plot', async () 
   assert.deepEqual(first.json, second.json, 'the same plot must always grade the same');
   assert.equal((await get('/api/plots/PLT-0000/health')).status, 404);
 });
+
+test('deletes a plot, then reports it gone', async () => {
+  const created = await post(body(square(76.9, 12.9, 0.001)));
+  assert.equal(created.status, 201);
+  const id = created.json.id as string;
+
+  const del = await fetch(`${base}/api/plots/${id}`, { method: 'DELETE' });
+  assert.equal(del.status, 200);
+  assert.deepEqual(await del.json(), { deleted: id });
+
+  assert.equal((await get(`/api/plots/${id}`)).status, 404);
+  const list = (await get('/api/plots')).json as Plot[];
+  assert.ok(!list.some((p) => p.id === id), 'deleted plot still listed');
+
+  // A second delete is a 404, not a silent success.
+  const again = await fetch(`${base}/api/plots/${id}`, { method: 'DELETE' });
+  assert.equal(again.status, 404);
+});

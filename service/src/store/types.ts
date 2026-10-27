@@ -42,5 +42,8 @@ export interface PlotStore {
   /** Plots whose centroid is within `radiusM`, nearest first. */
   listPlotsNear(lat: number, lng: number, radiusM: number): Promise<PlotWithDistance[]>;
 
+  /** Removes one plot and its health snapshots. False when no such plot. */
+  deletePlot(id: string): Promise<boolean>;
+
   deleteAllPlots(): Promise<void>;
 }

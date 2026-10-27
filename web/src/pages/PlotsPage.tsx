@@ -13,7 +13,22 @@ import { api, ApiRequestError } from '../api.js';
 export function PlotsPage() {
   const [plots, setPlots] = useState<Plot[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  const handleDelete = async (plot: Plot) => {
+    if (!window.confirm(`Delete ${plot.id} "${plot.name}"? This cannot be undone.`)) return;
+    setDeleting(plot.id);
+    setError(null);
+    try {
+      await api.deletePlot(plot.id);
+      setPlots((current) => current?.filter((p) => p.id !== plot.id) ?? null);
+    } catch (err) {
+      setError((err as ApiRequestError).fullMessage);
+    } finally {
+      setDeleting(null);
+    }
+  };
 
   useEffect(() => {
     api
@@ -22,13 +37,13 @@ export function PlotsPage() {
       .catch((err: ApiRequestError) => setError(err.fullMessage));
   }, []);
 
-  if (error) return <p className="page warn">{error}</p>;
-  if (!plots) return <p className="page">Loading…</p>;
+  if (!plots) return <p className={error ? 'page warn' : 'page'}>{error ?? 'Loading…'}</p>;
 
   return (
     <div className="page">
       <h1>Saved plots</h1>
       <p className="hint">{plots.length} plot(s). Click a row to zoom it on the map.</p>
+      {error && <p className="warn">{error}</p>}
       <table className="plots-table">
         <thead>
           <tr>
@@ -38,6 +53,7 @@ export function PlotsPage() {
             <th className="num">Acres</th>
             <th>Centroid</th>
             <th>Created</th>
+            <th />
             <th />
           </tr>
         </thead>
@@ -63,6 +79,19 @@ export function PlotsPage() {
                 >
                   GeoJSON
                 </a>
+              </td>
+              <td>
+                <button
+                  type="button"
+                  className="danger small"
+                  disabled={deleting !== null}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleDelete(plot);
+                  }}
+                >
+                  {deleting === plot.id ? 'Deleting…' : 'Delete'}
+                </button>
               </td>
             </tr>
           ))}

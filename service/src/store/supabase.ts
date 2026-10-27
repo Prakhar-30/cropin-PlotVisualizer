@@ -145,6 +145,16 @@ export class SupabasePlotStore implements PlotStore {
     }));
   }
 
+  async deletePlot(id: string): Promise<boolean> {
+    const { data, error } = await this.client.rpc('fieldar_delete_plot', { p_id: id });
+    if (error) {
+      throw new Error(
+        `delete failed: ${error.message}. If the function is missing, run service/sql/004_delete_plot.sql.`,
+      );
+    }
+    return data === true;
+  }
+
   async deleteAllPlots(): Promise<void> {
     const { error } = await this.client.rpc('fieldar_delete_all_plots');
     if (error) throw new Error(`delete failed: ${error.message}`);

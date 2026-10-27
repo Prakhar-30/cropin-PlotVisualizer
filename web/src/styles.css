@@ -286,6 +286,46 @@ button.ghost {
   background: none;
 }
 
+button.danger {
+  background: none;
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+button.danger:hover:not(:disabled) {
+  background: var(--warn);
+  color: #fff;
+}
+
+button.small {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.selected-plot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--panel-edge);
+}
+
+.selected-plot > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.selected-plot .label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
 button:disabled {
   opacity: 0.45;
   cursor: not-allowed;

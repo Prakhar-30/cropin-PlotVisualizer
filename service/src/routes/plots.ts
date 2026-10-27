@@ -93,6 +93,25 @@ plotsRouter.get('/:id', async (req, res, next) => {
   }
 });
 
+/**
+ * DELETE /api/plots/:id - removes the plot and its health snapshots. Answers
+ * with a JSON body rather than a bare 204 so every response the web client
+ * parses is JSON.
+ */
+plotsRouter.delete('/:id', async (req, res, next) => {
+  try {
+    const removed = await (await getReadyStore()).deletePlot(req.params.id);
+    if (!removed) {
+      const { status, body } = fail(404, 'plot not found');
+      res.status(status).json(body);
+      return;
+    }
+    res.json({ deleted: req.params.id });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/plots/:id/health - 3 m crop-condition cells on three indices, and their patches.
 plotsRouter.use('/:id/health', healthRouter);
 

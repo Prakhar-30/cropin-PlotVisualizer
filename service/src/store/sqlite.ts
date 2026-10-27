@@ -209,6 +209,10 @@ function pickColourIndex(lat: number, lng: number, neighbourhoodM = 500): number
   return best;
 }
 
+function deletePlotSync(id: string): boolean {
+  return getDb().prepare('DELETE FROM plots WHERE id = ?').run(id).changes > 0;
+}
+
 function deleteAllPlotsSync(): void {
   getDb().exec('DELETE FROM plots');
 }
@@ -240,6 +244,10 @@ export class SqlitePlotStore implements PlotStore {
 
   async listPlotsNear(lat: number, lng: number, radiusM: number): Promise<PlotWithDistance[]> {
     return listPlotsNearSync(lat, lng, radiusM);
+  }
+
+  async deletePlot(id: string): Promise<boolean> {
+    return deletePlotSync(id);
   }
 
   async deleteAllPlots(): Promise<void> {

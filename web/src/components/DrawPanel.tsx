@@ -23,6 +23,10 @@ interface Props {
   onUndo: () => void;
   onClose: () => void;
   onSave: () => void;
+  /** The saved plot tapped on the map, offered for deletion. */
+  selected: Plot | null;
+  deleting: boolean;
+  onDelete: (plot: Plot) => void;
   /** Hidden on a phone while the health panel is showing. */
   className?: string;
 }
@@ -148,6 +152,26 @@ export function DrawPanel(props: Props) {
           {saving ? 'Saving…' : 'Save plot'}
         </button>
       </div>
+
+      {props.selected && (
+        <section className="selected-plot">
+          <div>
+            <span className="label">Selected plot</span>
+            <strong>{props.selected.name}</strong>
+            <span className="mono small">
+              {props.selected.id} · {formatHectares(props.selected.area_sq_m)}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="danger"
+            disabled={props.deleting}
+            onClick={() => props.onDelete(props.selected!)}
+          >
+            {props.deleting ? 'Deleting…' : 'Delete plot'}
+          </button>
+        </section>
+      )}
     </aside>
   );
 }
