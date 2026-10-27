@@ -13,48 +13,54 @@
     "green and brown, so there is no green in the palette - a green boundary on",
     "a green crop is the one combination guaranteed to disappear. White is",
     "included because the first field test happened after dark, where it reads",
-    "better than any hue."
+    "better than any hue.",
+    "",
+    "No red, orange, yellow or pink either: those belong to crop condition",
+    "(moderate yellow, critical red). Field testing showed a red plot and a yellow",
+    "plot side by side reading exactly like a critical patch next to a moderate",
+    "one. So plots are blues, violets and white, and red and yellow always mean",
+    "the crop."
   ],
   "colours": [
     {
       "index": 0,
-      "name": "red",
-      "hex": "#FF3B30"
-    },
-    {
-      "index": 1,
-      "name": "orange",
-      "hex": "#FF9F0A"
-    },
-    {
-      "index": 2,
-      "name": "yellow",
-      "hex": "#FFD60A"
-    },
-    {
-      "index": 3,
-      "name": "cyan",
-      "hex": "#64D2FF"
-    },
-    {
-      "index": 4,
       "name": "blue",
       "hex": "#0A84FF"
     },
     {
-      "index": 5,
+      "index": 1,
+      "name": "cyan",
+      "hex": "#64D2FF"
+    },
+    {
+      "index": 2,
       "name": "purple",
       "hex": "#BF5AF2"
     },
     {
+      "index": 3,
+      "name": "white",
+      "hex": "#F2F2F7"
+    },
+    {
+      "index": 4,
+      "name": "magenta",
+      "hex": "#E040FB"
+    },
+    {
+      "index": 5,
+      "name": "indigo",
+      "hex": "#5E5CE6"
+    },
+    {
       "index": 6,
-      "name": "pink",
-      "hex": "#FF375F"
+      "name": "lavender",
+      "hex": "#C7B8FF"
     },
     {
       "index": 7,
-      "name": "white",
-      "hex": "#F2F2F7"
+      "name": "orchid",
+      "hex": "#F49CFF"
     }
   ],
   "alpha": {
@@ -73,9 +79,8 @@
       "vigour / NDRE, water stress / LSWI), so an agent reads all three the same way.",
       "",
       "Kept apart from the plot palette above on purpose: that palette answers",
-      "'which plot is this', this one answers 'how is the crop doing'. Red does",
-      "collide with plot slot 0; the two never share a surface - plot colour is a",
-      "standing wall and rail, a zone is a patch on the ground or a drop point.",
+      "'which plot is this', this one answers 'how is the crop doing', and the",
+      "two share no hue: red and yellow are never a plot colour.",
       "",
       "Normal stays the faintest fill: it is context, and the field app does not",
       "draw it at all - only moderate and critical become drop points."

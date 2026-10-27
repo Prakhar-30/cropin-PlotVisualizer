@@ -9,14 +9,14 @@ export interface PlotColour {
 }
 
 export const PLOT_COLOURS: readonly PlotColour[] = [
-  { index: 0, name: 'red', hex: '#FF3B30' },
-  { index: 1, name: 'orange', hex: '#FF9F0A' },
-  { index: 2, name: 'yellow', hex: '#FFD60A' },
-  { index: 3, name: 'cyan', hex: '#64D2FF' },
-  { index: 4, name: 'blue', hex: '#0A84FF' },
-  { index: 5, name: 'purple', hex: '#BF5AF2' },
-  { index: 6, name: 'pink', hex: '#FF375F' },
-  { index: 7, name: 'white', hex: '#F2F2F7' },
+  { index: 0, name: 'blue', hex: '#0A84FF' },
+  { index: 1, name: 'cyan', hex: '#64D2FF' },
+  { index: 2, name: 'purple', hex: '#BF5AF2' },
+  { index: 3, name: 'white', hex: '#F2F2F7' },
+  { index: 4, name: 'magenta', hex: '#E040FB' },
+  { index: 5, name: 'indigo', hex: '#5E5CE6' },
+  { index: 6, name: 'lavender', hex: '#C7B8FF' },
+  { index: 7, name: 'orchid', hex: '#F49CFF' },
 ];
 
 /** Opacity each surface is drawn at, shared with the AR overlay. */
