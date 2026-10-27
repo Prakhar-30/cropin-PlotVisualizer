@@ -3,31 +3,36 @@ import {
   SEVERITY_COLOURS,
   SEVERITY_LABELS,
   indexSpec,
+  type HealthPatch,
   type IndexKey,
+  type Plot,
   type Severity,
 } from '@plot/shared';
 import type { PlotHealth } from '../api.js';
 import { formatCoordinate } from '../lib/healthLayer.js';
 
 /**
- * Crop condition for the selected plot: which index, its three zones, and the
- * patches worth walking to.
+ * Crop condition across every saved plot: which index, how the ground splits
+ * into its three zones, and the patches worth walking to.
  *
  * Three indices, one reading: each is split into normal, moderate and critical
  * and drawn green, yellow and red, so an agent reads crop greenness, crop vigour
  * and water stress the same way. The patch list is the deliverable - a coloured
- * grid tells an agronomist there is a problem; a ranked list of places inside
- * the boundary tells a field agent where to stand.
+ * grid tells an agronomist there is a problem; a list of places, worst first,
+ * tells a field agent where to stand.
  */
 
 const ZONES: Severity[] = [2, 1, 0];
 
+/** Beyond this the list stops helping; the map shows the rest. */
+const MAX_LISTED = 40;
+
 export interface HealthPanelProps {
   enabled: boolean;
-  loading: boolean;
-  plotId: string | null;
-  snapshot: PlotHealth | null;
-  error: string | null;
+  /** Snapshots still being fetched. */
+  pending: number;
+  plots: Plot[];
+  snapshots: ReadonlyMap<string, PlotHealth>;
   index: IndexKey;
   onToggle: (enabled: boolean) => void;
   onIndexChange: (index: IndexKey) => void;
@@ -36,12 +41,16 @@ export interface HealthPanelProps {
   className?: string;
 }
 
+interface ListedPatch extends HealthPatch {
+  plotId: string;
+  plotName: string;
+}
+
 export function HealthPanel({
   enabled,
-  loading,
-  plotId,
-  snapshot,
-  error,
+  pending,
+  plots,
+  snapshots,
   index,
   onToggle,
   onIndexChange,
@@ -49,9 +58,23 @@ export function HealthPanel({
   className,
 }: HealthPanelProps) {
   const spec = indexSpec(index);
-  const summary = snapshot?.indices.find((i) => i.key === index);
-  const patches = snapshot?.patches.filter((p) => p.index === index) ?? [];
-  const total = summary ? summary.zone_counts.reduce((a, b) => a + b, 0) : 0;
+
+  const counts = [0, 0, 0];
+  const patches: ListedPatch[] = [];
+  let synthetic = false;
+  for (const plot of plots) {
+    const snapshot = snapshots.get(plot.id);
+    if (!snapshot) continue;
+    synthetic ||= snapshot.synthetic;
+    const summary = snapshot.indices.find((i) => i.key === index);
+    summary?.zone_counts.forEach((n, zone) => (counts[zone] += n));
+    for (const patch of snapshot.patches) {
+      if (patch.index === index) patches.push({ ...patch, plotId: plot.id, plotName: plot.name });
+    }
+  }
+  patches.sort((a, b) => b.zone - a.zone || b.area_sq_m - a.area_sq_m);
+  const total = counts[0] + counts[1] + counts[2];
+  const graded = plots.filter((p) => snapshots.has(p.id)).length;
 
   return (
     <section className={`health-panel ${className ?? ''}`} aria-label="Crop condition">
@@ -60,7 +83,7 @@ export function HealthPanel({
           <input type="checkbox" checked={enabled} onChange={(e) => onToggle(e.target.checked)} />
           <span>Crop condition</span>
         </label>
-        {loading && <span className="health-panel__status">loading…</span>}
+        {enabled && pending > 0 && <span className="health-panel__status">loading {pending}…</span>}
       </header>
 
       <div className="index-switch" role="tablist" aria-label="Index">
@@ -79,38 +102,39 @@ export function HealthPanel({
       </div>
       <p className="health-panel__hint">{spec.description}</p>
 
-      {!enabled && <p className="health-panel__hint">Turn on to grade the selected plot in 3 m cells.</p>}
-      {enabled && !plotId && <p className="health-panel__hint">Tap a saved plot on the map to grade it.</p>}
-      {enabled && error && <p className="health-panel__error">{error}</p>}
+      {!enabled && <p className="health-panel__hint">Turn on to grade every saved plot in 3 m cells.</p>}
+      {enabled && plots.length === 0 && <p className="health-panel__hint">No saved plots yet.</p>}
 
-      {enabled && snapshot && summary && (
+      {enabled && total > 0 && (
         <>
-          {snapshot.synthetic && <p className="health-panel__warning">Demo values — not yet from satellite imagery.</p>}
+          {synthetic && <p className="health-panel__warning">Demo values — not yet from satellite imagery.</p>}
 
           <ul className="health-legend">
             {ZONES.map((zone) => {
-              const count = summary.zone_counts[zone];
-              const share = total > 0 ? Math.round((count / total) * 100) : 0;
+              const share = Math.round((counts[zone] / total) * 100);
               return (
                 <li key={zone}>
                   <span className="health-legend__swatch" style={{ background: SEVERITY_COLOURS[zone] }} />
-                  <span className="health-legend__label">{SEVERITY_LABELS[zone]}</span>
+                  <span className="health-legend__label">
+                    {SEVERITY_LABELS[zone]}
+                    {zone === 0 ? ' (not drawn)' : ''}
+                  </span>
                   <span className="health-legend__share">{share}%</span>
                 </li>
               );
             })}
           </ul>
           <p className="health-panel__hint">
-            {snapshot.plot_id} · {snapshot.cell_size_m} m cells · mean {spec.key.toUpperCase()} {summary.mean.toFixed(2)}
+            {graded} of {plots.length} plots · 3 m cells · {spec.key.toUpperCase()}
           </p>
 
-          <h3 className="health-panel__subhead">Patches to visit ({patches.length})</h3>
+          <h3 className="health-panel__subhead">Drop points ({patches.length})</h3>
           {patches.length === 0 ? (
             <p className="health-panel__hint">No moderate or critical patches for {spec.label.toLowerCase()}.</p>
           ) : (
             <ol className="hotspot-list">
-              {patches.map((patch) => (
-                <li key={patch.rank}>
+              {patches.slice(0, MAX_LISTED).map((patch) => (
+                <li key={`${patch.plotId}-${patch.rank}`}>
                   <button
                     type="button"
                     className="hotspot-list__row"
@@ -120,18 +144,19 @@ export function HealthPanel({
                       {patch.rank}
                     </span>
                     <span className="hotspot-list__body">
-                      <span className="hotspot-list__coord">
-                        {formatCoordinate(patch.centroid_lat, patch.centroid_lng)}
-                      </span>
+                      <span className="hotspot-list__coord">{patch.plotName}</span>
                       <span className="hotspot-list__meta">
                         {SEVERITY_LABELS[patch.zone]} · {Math.round(patch.area_sq_m)} m² ·{' '}
-                        {spec.key.toUpperCase()} {patch.mean_value.toFixed(2)}
+                        {formatCoordinate(patch.centroid_lat, patch.centroid_lng)}
                       </span>
                     </span>
                   </button>
                 </li>
               ))}
             </ol>
+          )}
+          {patches.length > MAX_LISTED && (
+            <p className="health-panel__hint">and {patches.length - MAX_LISTED} more on the map.</p>
           )}
         </>
       )}

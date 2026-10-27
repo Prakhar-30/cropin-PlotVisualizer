@@ -793,3 +793,11 @@ button:disabled {
     font-size: 12px;
   }
 }
+
+/* Drop point popup on the map: MapLibre's popup is white, so the text is dark. */
+.drop-popup .maplibregl-popup-content {
+  color: #0b0f14;
+  font-size: 12.5px;
+  line-height: 1.45;
+  padding: 10px 26px 10px 12px;
+}

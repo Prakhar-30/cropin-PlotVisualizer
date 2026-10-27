@@ -4,23 +4,25 @@ import type { PlotHealth } from '../api.js';
 import { MapOverlay } from './mapOverlay.js';
 
 /**
- * The crop-condition overlay for one index, and its patch pins.
+ * Crop condition for every saved plot at once, on one index: the moderate and
+ * critical cells, and a drop point on each patch.
+ *
+ * Normal cells are not painted. Across many plots a green wash hides the
+ * imagery and the boundaries, and the question the map answers is the same one
+ * the camera answers: where does somebody need to go. The panel still reports
+ * the normal share.
  *
  * Cells are drawn as real polygons rather than as a raster image so that they
- * stay geographically registered at every zoom - the point of the feature is
- * that a coloured square is a place you can walk to, and a stretched bitmap
- * stops being that as soon as the map is tilted or the projection matters.
- *
- * Hotspot pins carry their own coordinates in the label. That is the whole
- * request from the field: the agent reads the number off the screen, or copies
- * it, and walks there.
+ * stay geographically registered at every zoom. Drop points are a circle layer,
+ * not DOM markers, so a few hundred of them cost nothing; clicking one opens
+ * its plot, zone and coordinate.
  */
 
 const SRC_CELLS = 'plot-health-cells';
-const SRC_HOTSPOTS = 'plot-health-hotspots';
+const SRC_DROPS = 'plot-health-drops';
 const LAYER_CELLS = 'plot-health-cells-fill';
 const LAYER_CELL_EDGES = 'plot-health-cells-line';
-const LAYER_HOTSPOT_RING = 'plot-health-hotspot-ring';
+const LAYER_DROPS = 'plot-health-drops-circle';
 
 const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 
@@ -30,13 +32,13 @@ export function formatCoordinate(lat: number, lng: number): string {
 }
 
 export class PlotHealthLayer extends MapOverlay {
-  private pins: maplibregl.Marker[] = [];
+  private popup: maplibregl.Popup | null = null;
 
   constructor(map: MapLibreMap, beforeLayerId?: string) {
     super(map);
 
     map.addSource(SRC_CELLS, { type: 'geojson', data: EMPTY });
-    map.addSource(SRC_HOTSPOTS, { type: 'geojson', data: EMPTY });
+    map.addSource(SRC_DROPS, { type: 'geojson', data: EMPTY });
 
     map.addLayer(
       {
@@ -44,14 +46,13 @@ export class PlotHealthLayer extends MapOverlay {
         type: 'fill',
         source: SRC_CELLS,
         paint: {
-          // The colour is baked into each feature by `setSnapshot`, so the
-          // banding thresholds live in @plot/shared and not in a style
-          // expression that only this file would know about.
+          // The colour is baked into each feature by `setSnapshots`, so the
+          // zone edges live in @plot/shared and not in a style expression that
+          // only this file would know about.
           'fill-color': ['get', 'colour'],
-          // Translucent enough to read the imagery underneath: an agronomist
-          // wants to see the crop and the grading at once, and an opaque grid
-          // hides exactly the evidence that makes the grading believable.
-          'fill-opacity': 0.55,
+          // Translucent enough to read the imagery underneath: the crop and the
+          // grading together are what make the grading believable.
+          'fill-opacity': 0.6,
         },
       },
       beforeLayerId,
@@ -67,110 +68,94 @@ export class PlotHealthLayer extends MapOverlay {
       beforeLayerId,
     );
 
+    // On top of everything, plot outlines included: a drop point is the thing
+    // to find on the map.
     map.addLayer({
-      id: LAYER_HOTSPOT_RING,
+      id: LAYER_DROPS,
       type: 'circle',
-      source: SRC_HOTSPOTS,
+      source: SRC_DROPS,
       paint: {
-        'circle-radius': 14,
-        'circle-color': 'transparent',
-        'circle-stroke-color': '#ffffff',
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 3, 16, 6, 19, 9],
+        'circle-color': ['get', 'colour'],
+        'circle-stroke-color': '#0b0f14',
         'circle-stroke-width': 2,
-        'circle-stroke-opacity': 0.9,
       },
     });
+
+    this.onLayer('click', LAYER_DROPS, (e) => {
+      const feature = e.features?.[0];
+      if (!feature || feature.geometry.type !== 'Point') return;
+      const [lng, lat] = feature.geometry.coordinates as [number, number];
+      const p = feature.properties as { plot: string; label: string; area: number };
+      this.popup?.remove();
+      this.popup = new maplibregl.Popup({ closeButton: true, offset: 10, className: 'drop-popup' })
+        .setLngLat([lng, lat])
+        .setHTML(
+          `<strong>${escapeHtml(p.plot)}</strong><br>${escapeHtml(p.label)} · ${Math.round(p.area)} m²` +
+            `<br><span class="mono">${formatCoordinate(lat, lng)}</span>`,
+        )
+        .addTo(this.map);
+    });
+    this.onLayer('mouseenter', LAYER_DROPS, () => (this.map.getCanvas().style.cursor = 'pointer'));
+    this.onLayer('mouseleave', LAYER_DROPS, () => (this.map.getCanvas().style.cursor = ''));
   }
 
   protected layerIds(): string[] {
-    return [LAYER_HOTSPOT_RING, LAYER_CELL_EDGES, LAYER_CELLS];
+    return [LAYER_DROPS, LAYER_CELL_EDGES, LAYER_CELLS];
   }
 
   protected sourceIds(): string[] {
-    return [SRC_HOTSPOTS, SRC_CELLS];
+    return [SRC_DROPS, SRC_CELLS];
   }
 
   protected override releaseExtras(): void {
-    for (const pin of this.pins) pin.remove();
-    this.pins = [];
+    this.popup?.remove();
+    this.popup = null;
   }
 
   /**
-   * Draws one index of a snapshot - every cell in its zone colour, and a pin on
-   * each moderate or critical patch - or clears the overlay when passed `null`.
+   * Draws one index across every snapshot given: moderate and critical cells in
+   * their zone colour, and a drop point on each patch. `plotNames` labels the
+   * popups.
    */
-  setSnapshot(snapshot: PlotHealth | null, index: IndexKey = 'ndvi'): void {
-    if (!snapshot) {
-      this.clear();
-      return;
+  setSnapshots(snapshots: PlotHealth[], index: IndexKey, plotNames: ReadonlyMap<string, string>): void {
+    const cells: GeoJSON.Feature[] = [];
+    const drops: GeoJSON.Feature[] = [];
+    for (const snapshot of snapshots) {
+      const plot = plotNames.get(snapshot.plot_id) ?? snapshot.plot_id;
+      for (const cell of snapshot.cells) {
+        const zone = cell.zones[index];
+        if (zone < 1) continue;
+        cells.push({
+          type: 'Feature',
+          geometry: cell.cell,
+          properties: { zone, colour: SEVERITY_COLOURS[zone] },
+        });
+      }
+      for (const patch of snapshot.patches) {
+        if (patch.index !== index) continue;
+        drops.push({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [patch.centroid_lng, patch.centroid_lat] },
+          properties: {
+            zone: patch.zone,
+            colour: SEVERITY_COLOURS[patch.zone],
+            label: SEVERITY_LABELS[patch.zone],
+            area: patch.area_sq_m,
+            plot: `${plot} · ${snapshot.plot_id}`,
+          },
+        });
+      }
     }
-
-    (this.map.getSource(SRC_CELLS) as GeoJSONSource | undefined)?.setData({
-      type: 'FeatureCollection',
-      features: snapshot.cells.map((cell) => ({
-        type: 'Feature' as const,
-        geometry: cell.cell,
-        properties: {
-          value: cell.values[index],
-          zone: cell.zones[index],
-          colour: SEVERITY_COLOURS[cell.zones[index]],
-          label: SEVERITY_LABELS[cell.zones[index]],
-          coordinate: formatCoordinate(cell.centroid_lat, cell.centroid_lng),
-        },
-      })),
-    });
-
-    const patches = snapshot.patches.filter((p) => p.index === index);
-    (this.map.getSource(SRC_HOTSPOTS) as GeoJSONSource | undefined)?.setData({
-      type: 'FeatureCollection',
-      features: patches.map((hotspot) => ({
-        type: 'Feature' as const,
-        geometry: {
-          type: 'Point' as const,
-          coordinates: [hotspot.centroid_lng, hotspot.centroid_lat],
-        },
-        properties: { rank: hotspot.rank },
-      })),
-    });
-
-    this.releaseExtras();
-    this.pins = patches.map((hotspot) => {
-      const el = document.createElement('div');
-      el.className = 'hotspot-pin';
-      el.style.setProperty('--hotspot-colour', SEVERITY_COLOURS[hotspot.zone]);
-
-      const rank = document.createElement('span');
-      rank.className = 'hotspot-pin__rank';
-      rank.textContent = String(hotspot.rank);
-
-      const readout = document.createElement('span');
-      readout.className = 'hotspot-pin__coord';
-      readout.textContent = formatCoordinate(hotspot.centroid_lat, hotspot.centroid_lng);
-      // One click puts the coordinate on the clipboard, which is how it gets
-      // into a phone: the agent is going to type it into a maps app, and
-      // transcribing six decimal places by eye is where mistakes come from.
-      readout.title = 'Click to copy';
-      readout.addEventListener('click', () => {
-        void navigator.clipboard
-          ?.writeText(formatCoordinate(hotspot.centroid_lat, hotspot.centroid_lng))
-          .then(() => {
-            readout.classList.add('is-copied');
-            setTimeout(() => readout.classList.remove('is-copied'), 1200);
-          })
-          .catch(() => {
-            /* clipboard blocked; the number is still on screen to read */
-          });
-      });
-
-      el.append(rank, readout);
-      return new maplibregl.Marker({ element: el, anchor: 'top' })
-        .setLngLat([hotspot.centroid_lng, hotspot.centroid_lat])
-        .addTo(this.map);
-    });
+    // Critical drawn last, so a red point is never hidden under a yellow one.
+    drops.sort((a, b) => (a.properties!.zone as number) - (b.properties!.zone as number));
+    (this.map.getSource(SRC_CELLS) as GeoJSONSource | undefined)?.setData({ type: 'FeatureCollection', features: cells });
+    (this.map.getSource(SRC_DROPS) as GeoJSONSource | undefined)?.setData({ type: 'FeatureCollection', features: drops });
   }
 
   clear(): void {
     (this.map.getSource(SRC_CELLS) as GeoJSONSource | undefined)?.setData(EMPTY);
-    (this.map.getSource(SRC_HOTSPOTS) as GeoJSONSource | undefined)?.setData(EMPTY);
+    (this.map.getSource(SRC_DROPS) as GeoJSONSource | undefined)?.setData(EMPTY);
     this.releaseExtras();
   }
 
@@ -179,8 +164,10 @@ export class PlotHealthLayer extends MapOverlay {
     for (const id of this.layerIds()) {
       if (this.map.getLayer(id)) this.map.setLayoutProperty(id, 'visibility', value);
     }
-    for (const pin of this.pins) {
-      pin.getElement().style.display = visible ? '' : 'none';
-    }
+    if (!visible) this.releaseExtras();
   }
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }

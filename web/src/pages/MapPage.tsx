@@ -30,10 +30,11 @@ export function MapPage() {
   const [deleting, setDeleting] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [healthOn, setHealthOn] = useState(false);
-  const [health, setHealth] = useState<PlotHealth | null>(null);
-  const [healthLoading, setHealthLoading] = useState(false);
-  const [healthError, setHealthError] = useState<string | null>(null);
+  const [healthOn, setHealthOn] = useState(true);
+  const [healthByPlot, setHealthByPlot] = useState<ReadonlyMap<string, PlotHealth>>(new Map());
+  const [healthPending, setHealthPending] = useState(0);
+  /** Ids asked for already, so a plot list refresh does not refetch them. */
+  const healthRequested = useRef(new Set<string>());
   const [healthIndex, setHealthIndex] = useState<IndexKey>('ndvi');
   /** On a phone only one panel fits; this says which. Ignored on a desktop. */
   const [mobilePanel, setMobilePanel] = useState<'draw' | 'health'>('health');
@@ -103,41 +104,41 @@ export function MapPage() {
   }, [map, focusId, plots]);
 
   /*
-   * Health follows the focused plot. Fetching only when the toggle is on keeps
-   * the raster off the wire for the common case - drawing a new boundary - where
-   * it would be a few hundred kilobytes of nothing anyone asked for.
+   * Crop condition for every saved plot, fetched once each and kept: a few at a
+   * time so a long plot list does not open dozens of connections at once, and
+   * only while the toggle is on, so drawing a boundary costs no rasters. A
+   * failed fetch is forgotten, so the next refresh of the list retries it.
    */
   useEffect(() => {
-    if (!healthOn || !focusId) {
-      setHealth(null);
-      healthLayer.current?.clear();
-      return;
-    }
-    let cancelled = false;
-    setHealthLoading(true);
-    setHealthError(null);
-    api
-      .getPlotHealth(focusId)
-      .then((snapshot) => {
-        if (cancelled) return;
-        setHealth(snapshot);
-      })
-      .catch((err: ApiRequestError) => {
-        if (!cancelled) setHealthError(err.fullMessage);
-      })
-      .finally(() => {
-        if (!cancelled) setHealthLoading(false);
-      });
-    return () => {
-      cancelled = true;
+    if (!healthOn) return;
+    const todo = plots.map((p) => p.id).filter((id) => !healthRequested.current.has(id));
+    if (todo.length === 0) return;
+    for (const id of todo) healthRequested.current.add(id);
+    setHealthPending((n) => n + todo.length);
+    let next = 0;
+    const worker = async () => {
+      while (next < todo.length) {
+        const id = todo[next++];
+        try {
+          const snapshot = await api.getPlotHealth(id);
+          setHealthByPlot((current) => new Map(current).set(id, snapshot));
+        } catch {
+          healthRequested.current.delete(id);
+        } finally {
+          setHealthPending((n) => n - 1);
+        }
+      }
     };
-  }, [healthOn, focusId]);
+    for (let i = 0; i < Math.min(4, todo.length); i++) void worker();
+  }, [healthOn, plots]);
 
   // One fetch carries all three indices; switching index only redraws.
   useEffect(() => {
-    healthLayer.current?.setSnapshot(health, healthIndex);
+    const names = new Map(plots.map((p) => [p.id, p.name] as const));
+    const snapshots = plots.flatMap((p) => healthByPlot.get(p.id) ?? []);
+    healthLayer.current?.setSnapshots(snapshots, healthIndex, names);
     healthLayer.current?.setVisible(healthOn);
-  }, [healthOn, health, healthIndex]);
+  }, [map, healthOn, healthByPlot, healthIndex, plots]);
 
   const handleSave = async () => {
     const polygon = controller.current?.toPolygon();
@@ -230,10 +231,9 @@ export function MapPage() {
       <HealthPanel
         className={mobilePanel === 'health' ? '' : 'is-mobile-hidden'}
         enabled={healthOn}
-        loading={healthLoading}
-        plotId={focusId}
-        snapshot={health}
-        error={healthError}
+        pending={healthPending}
+        plots={plots}
+        snapshots={healthByPlot}
         index={healthIndex}
         onToggle={setHealthOn}
         onIndexChange={setHealthIndex}
