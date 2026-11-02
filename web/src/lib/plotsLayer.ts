@@ -90,7 +90,9 @@ export class SavedPlotsLayer extends MapOverlay {
       el.className = 'plot-label';
       el.style.setProperty('--plot-colour', plotColour(p.colour_index).hex);
       el.textContent = `${p.id} · ${formatHectares(p.area_sq_m)}`;
-      return new maplibregl.Marker({ element: el })
+      // Lifted off the plot's middle: a whole-plot drop point stands there,
+      // and a label centred on it hid it.
+      return new maplibregl.Marker({ element: el, anchor: 'bottom', offset: [0, -16] })
         .setLngLat([p.centroid_lng, p.centroid_lat])
         .addTo(this.map);
     });
