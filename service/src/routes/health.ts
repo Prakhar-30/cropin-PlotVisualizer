@@ -112,7 +112,8 @@ healthRouter.get<{ id: string }>('/', async (req, res, next) => {
       return;
     }
 
-    const key = `s2:${geometryKey(plot)}:${weekOf(new Date())}`;
+    // v2: inside-only pixel blending and segmented drop points.
+    const key = `s2v2:${geometryKey(plot)}:${weekOf(new Date())}`;
     const remembered = memory.get(`${plot.id}:${key}`);
     if (remembered && remembered.until > Date.now()) {
       res.json(remembered.body);

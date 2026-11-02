@@ -441,3 +441,42 @@ test('cells on a path are left out of crop condition', async () => {
     assert.ok(Math.abs(patch.centroid_lat - 14.3) * 110_540 > 1, 'no drop point stands on the path');
   }
 });
+
+/* ------------------------------------------------------- drop point placement */
+
+test('an edge-hugging U of stress gets several drop points, each on the stress', async () => {
+  const { findPatches } = await import('@plot/shared');
+  // A 30 x 25 cell plot whose moderate ground is a 2-cell band down the west
+  // edge, along the south edge and up the east edge - the shape edge effects
+  // and headland stress make - with one critical cell on the west side.
+  const cells: HealthCell[] = [];
+  for (let col = 0; col < 30; col++) {
+    for (let row = 0; row < 25; row++) {
+      const band = col < 2 || col >= 28 || row < 2;
+      const critical = col === 0 && row === 15;
+      const zone = critical ? 2 : band ? 1 : 0;
+      cells.push({
+        col,
+        row,
+        centroid_lat: row,
+        centroid_lng: col,
+        cell: { type: 'Polygon', coordinates: [] },
+        values: { ndvi: [0.7, 0.45, 0.2][zone]!, ndre: 0.4, lswi: 0.3 },
+        zones: { ndvi: zone as 0 | 1 | 2, ndre: 0, lswi: 0 },
+      });
+    }
+  }
+  const patches = findPatches(cells, 'ndvi', 3);
+  assert.ok(patches.length >= 4, `a 75-cell-long strip is several places, got ${patches.length}`);
+  const stressed = new Set(cells.filter((c) => c.zones.ndvi > 0).map((c) => `${c.centroid_lng},${c.centroid_lat}`));
+  for (const p of patches) {
+    assert.ok(stressed.has(`${p.centroid_lng},${p.centroid_lat}`), 'every drop point stands on a stressed cell');
+  }
+  const red = patches.filter((p) => p.zone === 2);
+  assert.equal(red.length, 1);
+  assert.deepEqual([red[0]!.centroid_lng, red[0]!.centroid_lat], [0, 15], 'the red point is on the red cell');
+  assert.equal(patches[0]!.zone, 2, 'worst first');
+  const total = patches.reduce((sum, p) => sum + p.cell_count, 0);
+  assert.equal(total, stressed.size, 'every stressed cell belongs to exactly one drop point');
+});
+

@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import zlib from 'node:zlib';
 import { Cog, lzwDecode, type RangeFetcher } from '../satellite/geotiff.js';
+import { BandWindow, insideRingXY } from '../satellite/sentinel.js';
 import { meridianArc, toUtm, zoneFromEpsg } from '../satellite/utm.js';
 
 /* ----------------------------------------------------------------- UTM */
@@ -250,3 +251,39 @@ function lzwEncode(input: Uint8Array): Uint8Array {
   });
   return out;
 }
+
+/* ------------------------------------------------------ edge contamination */
+
+test('blend: pixels outside the plot do not bleed into its edge cells', async () => {
+  // West half (cols 0-9) is road at 100, east half crop at 500; the plot is
+  // the east half, its edge at x = 600100.
+  const file = buildTiff(20, 20, 16, (c) => (c < 10 ? 100 : 500));
+  const cog = await Cog.open('mem://band', fakeFetcher(file).fetch);
+  const band = new BandWindow(cog, await cog.readWindow(0, 0, 20, 20));
+  const plot: [number, number][] = [
+    [600100, 1419800],
+    [600200, 1419800],
+    [600200, 1420000],
+    [600100, 1420000],
+  ];
+  const inside = (x: number, y: number) => insideRingXY(plot, x, y);
+  // 2 m inside the edge, between the road pixel's centre and the crop's.
+  const x = 600102;
+  const y = 1419905;
+  assert.ok(Math.abs(band.bilinear(x, y) - 380) < 1e-6, 'the plain blend is 30% road');
+  assert.equal(band.blend(x, y, inside), 500, 'the plot-only blend is all crop');
+  // Well inside, both agree.
+  assert.equal(band.blend(600150, 1419905, inside), 500);
+});
+
+test('insideRingXY: even-odd in map metres', () => {
+  const sq: [number, number][] = [
+    [0, 0],
+    [10, 0],
+    [10, 10],
+    [0, 10],
+  ];
+  assert.equal(insideRingXY(sq, 5, 5), true);
+  assert.equal(insideRingXY(sq, 15, 5), false);
+});
+

@@ -14,7 +14,9 @@ import { toUtm, zoneFromEpsg, type UtmZone } from './utm.js';
  *   LSWI, water stress   = (B8A - B11) / (B8A + B11)    20 m
  *
  * The plot's 3 m cells are finer than any of those pixels, so each cell takes
- * the bilinear blend of the four pixel centres around it: the grid keeps its
+ * the bilinear blend of the four pixel centres around it - counting only pixels
+ * whose centres are inside the plot, so the road outside does not bleed in
+ * (see [BandWindow.blend]): the grid keeps its
  * shape and patches still form, but detail inside one 10-20 m pixel is not in
  * the data, and every response says so.
  *
@@ -131,8 +133,19 @@ export function reflectanceOf(item: StacItem, asset: StacAsset): (dn: number) =>
   return (dn) => dn * scale + offset;
 }
 
+/** True when (x, y) lies inside [ring] (even-odd), all in map metres. */
+export function insideRingXY(ring: readonly [number, number][], x: number, y: number): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i]!;
+    const [xj, yj] = ring[j]!;
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
 /** A band read over the plot, sampled by map coordinate. */
-class BandWindow {
+export class BandWindow {
   constructor(
     private readonly cog: Cog,
     private readonly window: PixelWindow,
@@ -152,6 +165,64 @@ class BandWindow {
     const v01 = this.at(c0, r0 + 1);
     const v11 = this.at(c0 + 1, r0 + 1);
     return (v00 * (1 - tc) + v10 * tc) * (1 - tr) + (v01 * (1 - tc) + v11 * tc) * tr;
+  }
+
+  /**
+   * Like [bilinear], but blending only pixels whose centres are [inside] the
+   * plot.
+   *
+   * A 10-20 m pixel on the boundary is part road, bund or neighbour's crop,
+   * and blending it into the plot's edge cells painted a band of false stress
+   * all round every plot. Here the outside pixels get no weight; a cell with
+   * no inside pixel among its four takes the nearest inside pixel within two
+   * pixels; a plot too small to hold a pixel centre at all falls back to the
+   * plain blend, as nothing better is in the data.
+   */
+  blend(x: number, y: number, inside: (x: number, y: number) => boolean): number {
+    const [c, r] = this.cog.pixelOf(x, y);
+    const fc = c - 0.5 - this.window.col0;
+    const fr = r - 0.5 - this.window.row0;
+    const c0 = Math.floor(fc);
+    const r0 = Math.floor(fr);
+    const tc = fc - c0;
+    const tr = fr - r0;
+    let sum = 0;
+    let weight = 0;
+    for (const [dc, dr, w] of [
+      [0, 0, (1 - tc) * (1 - tr)],
+      [1, 0, tc * (1 - tr)],
+      [0, 1, (1 - tc) * tr],
+      [1, 1, tc * tr],
+    ] as const) {
+      const v = this.at(c0 + dc, r0 + dr);
+      if (!Number.isFinite(v) || !inside(...this.centre(c0 + dc, r0 + dr))) continue;
+      sum += v * w;
+      weight += w;
+    }
+    if (weight > 1e-9) return sum / weight;
+
+    let nearest = Number.NaN;
+    let nearestD = 2.0;
+    for (let dr = -2; dr <= 3; dr++) {
+      for (let dc = -2; dc <= 3; dc++) {
+        const v = this.at(c0 + dc, r0 + dr);
+        if (!Number.isFinite(v) || !inside(...this.centre(c0 + dc, r0 + dr))) continue;
+        const d = Math.hypot(c0 + dc - fc, r0 + dr - fr);
+        if (d <= nearestD) {
+          nearest = v;
+          nearestD = d;
+        }
+      }
+    }
+    return Number.isFinite(nearest) ? nearest : this.bilinear(x, y);
+  }
+
+  /** Map coordinates of the centre of window pixel (col, row). */
+  private centre(col: number, row: number): [number, number] {
+    return [
+      this.cog.originX + (this.window.col0 + col + 0.5) * this.cog.pixelSizeX,
+      this.cog.originY - (this.window.row0 + row + 0.5) * this.cog.pixelSizeY,
+    ];
   }
 
   /** The value of the pixel containing (x, y), or NaN. */
@@ -247,6 +318,8 @@ export async function sentinelSamplers(
     tried++;
 
     const bounds = utmBounds(polygon, zone);
+    const ringXY = polygon.coordinates[0]!.map(([lng, lat]) => toUtm(lat!, lng!, zone));
+    const insideXY = (x: number, y: number) => insideRingXY(ringXY, x, y);
     const scl = await readBand(assets.scl!.href, bounds, fetcher);
     const share = clearShare(scl, polygon, zone, inside);
     if (share < MIN_CLEAR_SHARE) continue;
@@ -276,9 +349,11 @@ export async function sentinelSamplers(
         cloudCoverPct: Number(item.properties['eo:cloud_cover'] ?? Number.NaN),
       },
       samplers: {
-        ndvi: index((x, y) => ratio(rho.nir(nir!.bilinear(x, y)), rho.red(red!.bilinear(x, y)))),
-        ndre: index((x, y) => ratio(rho.nir08(nir08!.bilinear(x, y)), rho.rededge1(rededge!.bilinear(x, y)))),
-        lswi: index((x, y) => ratio(rho.nir08(nir08!.bilinear(x, y)), rho.swir16(swir!.bilinear(x, y)))),
+        ndvi: index((x, y) => ratio(rho.nir(nir!.blend(x, y, insideXY)), rho.red(red!.blend(x, y, insideXY)))),
+        ndre: index((x, y) =>
+          ratio(rho.nir08(nir08!.blend(x, y, insideXY)), rho.rededge1(rededge!.blend(x, y, insideXY))),
+        ),
+        lswi: index((x, y) => ratio(rho.nir08(nir08!.blend(x, y, insideXY)), rho.swir16(swir!.blend(x, y, insideXY)))),
       },
     };
   }

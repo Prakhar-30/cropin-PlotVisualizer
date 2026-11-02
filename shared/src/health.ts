@@ -291,17 +291,131 @@ function summarise(spec: IndexSpec, cells: HealthCell[]): IndexSummary {
 }
 
 /**
+ * A long patch is split into pieces in which no cell is this many steps
+ * (8 x 3 m = 24 m) or more from the piece's seed, so a strip becomes a piece
+ * every 25-50 m and a compact blob up to about 25 m across stays whole. A strip of stress down a whole 100 m edge is several places to walk to,
+ * not one; a single point for it landed in the middle of the plot or on the
+ * boundary line.
+ */
+export const PATCH_SEGMENT_CELLS = 8;
+
+const NEIGHBOURS = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+] as const;
+
+const keyOf = (c: HealthCell) => `${c.col},${c.row}`;
+
+/**
+ * Steps from each of [cells] to the nearest of [seeds], moving between
+ * 4-connected cells of the set only; also which seed it is nearest to.
+ */
+function bfsFrom(cells: Map<string, HealthCell>, seeds: string[]): Map<string, { steps: number; seed: number }> {
+  const out = new Map<string, { steps: number; seed: number }>();
+  const queue: string[] = [];
+  seeds.forEach((key, seed) => {
+    out.set(key, { steps: 0, seed });
+    queue.push(key);
+  });
+  for (let head = 0; head < queue.length; head++) {
+    const key = queue[head]!;
+    const cell = cells.get(key)!;
+    const here = out.get(key)!;
+    for (const [dCol, dRow] of NEIGHBOURS) {
+      const next = `${cell.col + dCol},${cell.row + dRow}`;
+      if (!cells.has(next) || out.has(next)) continue;
+      out.set(next, { steps: here.steps + 1, seed: here.seed });
+      queue.push(next);
+    }
+  }
+  return out;
+}
+
+/**
+ * Splits one connected patch into pieces with no cell [PATCH_SEGMENT_CELLS]
+ * or more steps from their own seed: farthest-point seeding along the patch,
+ * then every cell to its nearest seed. A compact blob stays whole; an L or U
+ * strip along the plot edges becomes a run of pieces along it.
+ */
+function segment(cluster: HealthCell[]): HealthCell[][] {
+  const cells = new Map(cluster.map((c) => [keyOf(c), c] as const));
+  const keys = [...cells.keys()].sort();
+  // Start from one end of the patch: the cell farthest from an arbitrary one.
+  const fromAny = bfsFrom(cells, [keys[0]!]);
+  let first = keys[0]!;
+  for (const [key, { steps }] of fromAny) if (steps > fromAny.get(first)!.steps) first = key;
+
+  const seeds = [first];
+  let reach = bfsFrom(cells, seeds);
+  for (;;) {
+    let farthest = '';
+    let farthestSteps = -1;
+    for (const key of keys) {
+      const steps = reach.get(key)?.steps ?? 0;
+      if (steps > farthestSteps) {
+        farthest = key;
+        farthestSteps = steps;
+      }
+    }
+    if (farthestSteps < PATCH_SEGMENT_CELLS) break;
+    seeds.push(farthest);
+    reach = bfsFrom(cells, seeds);
+  }
+
+  const pieces: HealthCell[][] = seeds.map(() => []);
+  for (const key of keys) pieces[reach.get(key)?.seed ?? 0]!.push(cells.get(key)!);
+  return pieces.filter((p) => p.length > 0);
+}
+
+/**
+ * Where a piece's drop point stands: on one of its worst cells - so a red
+ * point is on red ground - and of those, the one deepest inside the patch
+ * (furthest in steps from the patch's own edge and from the plot boundary),
+ * nearest the worst cells' average as a tie-break. Never on a cell that is not
+ * part of the problem, which the plain average of an L-shaped patch was.
+ */
+function dropCell(piece: HealthCell[], patch: Map<string, HealthCell>, worst: HealthCell[]): HealthCell {
+  // Depth: steps from the nearest patch cell that has a 4-neighbour outside
+  // the patch (another zone, a path, or the plot edge).
+  const rim = [...patch.values()]
+    .filter((c) => NEIGHBOURS.some(([dc, dr]) => !patch.has(`${c.col + dc},${c.row + dr}`)))
+    .map(keyOf);
+  const depth = bfsFrom(patch, rim);
+  const meanCol = worst.reduce((sum, c) => sum + c.col, 0) / worst.length;
+  const meanRow = worst.reduce((sum, c) => sum + c.row, 0) / worst.length;
+  const worstKeys = new Set(worst.map(keyOf));
+  let best = worst[0]!;
+  let bestDepth = -1;
+  let bestOff = Infinity;
+  for (const cell of piece) {
+    if (!worstKeys.has(keyOf(cell))) continue;
+    const d = depth.get(keyOf(cell))?.steps ?? 0;
+    const off = Math.hypot(cell.col - meanCol, cell.row - meanRow);
+    if (d > bestDepth || (d === bestDepth && off < bestOff)) {
+      best = cell;
+      bestDepth = d;
+      bestOff = off;
+    }
+  }
+  return best;
+}
+
+/**
  * Groups touching moderate-or-critical cells for one index into patches,
- * worst first.
+ * worst first, and gives each its drop point.
  *
  * Four-way connectivity, not eight. Diagonal-only neighbours share a single
  * corner on the ground; chaining through them merges two separate problems and
- * puts the drop point in the healthy gap between them.
+ * puts the drop point in the healthy gap between them. A long patch is split
+ * into pieces every 25-50 m ([PATCH_SEGMENT_CELLS]), each its own drop point, and
+ * every drop point stands on one of its piece's worst cells (see [dropCell]).
  */
 export function findPatches(cells: HealthCell[], index: IndexKey, cellSizeM: number = CELL_SIZE_M): HealthPatch[] {
   const flagged = new Map<string, HealthCell>();
   for (const cell of cells) {
-    if (cell.zones[index] >= ZONE_MODERATE) flagged.set(`${cell.col},${cell.row}`, cell);
+    if (cell.zones[index] >= ZONE_MODERATE) flagged.set(keyOf(cell), cell);
   }
 
   const seen = new Set<string>();
@@ -315,12 +429,7 @@ export function findPatches(cells: HealthCell[], index: IndexKey, cellSizeM: num
       const cell = flagged.get(queue.pop()!);
       if (!cell) continue;
       cluster.push(cell);
-      for (const [dCol, dRow] of [
-        [1, 0],
-        [-1, 0],
-        [0, 1],
-        [0, -1],
-      ] as const) {
+      for (const [dCol, dRow] of NEIGHBOURS) {
         const neighbour = `${cell.col + dCol},${cell.row + dRow}`;
         if (flagged.has(neighbour) && !seen.has(neighbour)) {
           seen.add(neighbour);
@@ -331,27 +440,41 @@ export function findPatches(cells: HealthCell[], index: IndexKey, cellSizeM: num
     if (cluster.length >= MIN_PATCH_CELLS) clusters.push(cluster);
   }
 
-  return clusters
-    .map((cluster) => {
-      // The drop point stands on the patch's worst cells, not on its average:
-      // a ring-shaped patch would otherwise put the marker in its healthy
-      // middle.
-      const zone = Math.max(...cluster.map((c) => c.zones[index])) as Severity;
-      const core = cluster.filter((c) => c.zones[index] === zone);
-      return {
+  const patches: Omit<HealthPatch, 'rank'>[] = [];
+  for (const cluster of clusters) {
+    const patch = new Map(cluster.map((c) => [keyOf(c), c] as const));
+    for (const piece of segment(cluster)) {
+      if (piece.length < MIN_PATCH_CELLS) continue;
+      // The piece's band is its worst cell: a patch with a red centre is red.
+      const zone = Math.max(...piece.map((c) => c.zones[index])) as Severity;
+      const worst = piece.filter((c) => c.zones[index] === zone);
+      const at = dropCell(piece, patch, worst);
+      patches.push({
         index,
         zone,
-        centroid_lat: core.reduce((sum, c) => sum + c.centroid_lat, 0) / core.length,
-        centroid_lng: core.reduce((sum, c) => sum + c.centroid_lng, 0) / core.length,
-        cell_count: cluster.length,
-        area_sq_m: cluster.length * cellSizeM * cellSizeM,
-        mean_value: round3(cluster.reduce((sum, c) => sum + c.values[index], 0) / cluster.length),
-      };
-    })
-    // Worst zone first, then largest, then lowest value: deterministic, so the
-    // same plot numbers its drop points the same way every time.
-    .sort((a, b) => b.zone - a.zone || b.cell_count - a.cell_count || a.mean_value - b.mean_value)
-    .map((patch, i) => ({ rank: i + 1, ...patch }));
+        centroid_lat: at.centroid_lat,
+        centroid_lng: at.centroid_lng,
+        cell_count: piece.length,
+        area_sq_m: piece.length * cellSizeM * cellSizeM,
+        mean_value: round3(piece.reduce((sum, c) => sum + c.values[index], 0) / piece.length),
+      });
+    }
+  }
+
+  return (
+    patches
+      // Worst zone first, then largest, then lowest value, then position:
+      // deterministic, so the same plot numbers its drop points the same way.
+      .sort(
+        (a, b) =>
+          b.zone - a.zone ||
+          b.cell_count - a.cell_count ||
+          a.mean_value - b.mean_value ||
+          a.centroid_lat - b.centroid_lat ||
+          a.centroid_lng - b.centroid_lng,
+      )
+      .map((patch, i) => ({ rank: i + 1, ...patch }))
+  );
 }
 
 /**
