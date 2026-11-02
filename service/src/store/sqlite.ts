@@ -5,6 +5,7 @@ import {
   generatePlotId,
   haversineMetres,
   type NormalizedPlot,
+  type PathExclusion,
   type Plot,
   PLOT_COLOURS,
   type PlotWithDistance,
@@ -30,7 +31,9 @@ interface PlotRow {
   area_sq_m: number;
   landmark_note: string;
   colour_index: number;
+  exclusions: string;
   created_at: string;
+  updated_at: string | null;
 }
 
 const SCHEMA = `
@@ -43,7 +46,15 @@ CREATE TABLE IF NOT EXISTS plots (
   area_sq_m     REAL NOT NULL,
   landmark_note TEXT NOT NULL DEFAULT '',
   colour_index  INTEGER NOT NULL DEFAULT 0,
-  created_at    TEXT NOT NULL
+  exclusions    TEXT NOT NULL DEFAULT '[]',
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT
+);
+CREATE TABLE IF NOT EXISTS health_cache (
+  plot_id    TEXT NOT NULL,
+  cache_key  TEXT NOT NULL,
+  payload    TEXT NOT NULL,
+  PRIMARY KEY (plot_id, cache_key)
 );
 -- The mobile app's hot path is a bounding-box scan on the centroid.
 CREATE INDEX IF NOT EXISTS idx_plots_centroid ON plots (centroid_lat, centroid_lng);
@@ -78,6 +89,12 @@ function migrate(handle: Database.Database): void {
   if (!columns.has('colour_index')) {
     handle.exec('ALTER TABLE plots ADD COLUMN colour_index INTEGER NOT NULL DEFAULT 0');
   }
+  if (!columns.has('exclusions')) {
+    handle.exec("ALTER TABLE plots ADD COLUMN exclusions TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!columns.has('updated_at')) {
+    handle.exec('ALTER TABLE plots ADD COLUMN updated_at TEXT');
+  }
 }
 
 /**
@@ -98,7 +115,13 @@ function closeDb(): void {
 }
 
 function rowToPlot(row: PlotRow): Plot {
-  return { ...row, polygon: JSON.parse(row.polygon) as Polygon };
+  const { updated_at, ...rest } = row;
+  return {
+    ...rest,
+    polygon: JSON.parse(row.polygon) as Polygon,
+    exclusions: JSON.parse(row.exclusions || '[]') as PathExclusion[],
+    ...(updated_at ? { updated_at } : {}),
+  };
 }
 
 const MAX_ID_ATTEMPTS = 20;
@@ -113,8 +136,10 @@ const MAX_ID_ATTEMPTS = 20;
 function insertPlotSync(value: NormalizedPlot, forcedId?: string): Plot {
   const stmt = getDb().prepare(
     `INSERT INTO plots
-       (id, name, polygon, centroid_lat, centroid_lng, area_sq_m, landmark_note, colour_index, created_at)
-     VALUES (@id, @name, @polygon, @centroid_lat, @centroid_lng, @area_sq_m, @landmark_note, @colour_index, @created_at)`,
+       (id, name, polygon, centroid_lat, centroid_lng, area_sq_m, landmark_note, colour_index, exclusions,
+        created_at, updated_at)
+     VALUES (@id, @name, @polygon, @centroid_lat, @centroid_lng, @area_sq_m, @landmark_note, @colour_index,
+        @exclusions, @created_at, @updated_at)`,
   );
   const created_at = new Date().toISOString();
   const colour_index = pickColourIndex(value.centroid_lat, value.centroid_lng);
@@ -130,7 +155,9 @@ function insertPlotSync(value: NormalizedPlot, forcedId?: string): Plot {
       area_sq_m: value.area_sq_m,
       landmark_note: value.landmark_note,
       colour_index,
+      exclusions: JSON.stringify(value.exclusions),
       created_at,
+      updated_at: created_at,
     };
     try {
       stmt.run(row);
@@ -209,11 +236,36 @@ function pickColourIndex(lat: number, lng: number, neighbourhoodM = 500): number
   return best;
 }
 
+function updatePlotSync(id: string, value: NormalizedPlot): Plot | null {
+  const changed = getDb()
+    .prepare(
+      `UPDATE plots
+          SET name = @name, polygon = @polygon, centroid_lat = @centroid_lat, centroid_lng = @centroid_lng,
+              area_sq_m = @area_sq_m, landmark_note = @landmark_note, exclusions = @exclusions,
+              updated_at = @updated_at
+        WHERE id = @id`,
+    )
+    .run({
+      id,
+      name: value.name,
+      polygon: JSON.stringify(value.polygon),
+      centroid_lat: value.centroid_lat,
+      centroid_lng: value.centroid_lng,
+      area_sq_m: value.area_sq_m,
+      landmark_note: value.landmark_note,
+      exclusions: JSON.stringify(value.exclusions),
+      updated_at: new Date().toISOString(),
+    }).changes;
+  return changed > 0 ? getPlotSync(id) : null;
+}
+
 function deletePlotSync(id: string): boolean {
+  getDb().prepare('DELETE FROM health_cache WHERE plot_id = ?').run(id);
   return getDb().prepare('DELETE FROM plots WHERE id = ?').run(id).changes > 0;
 }
 
 function deleteAllPlotsSync(): void {
+  getDb().exec('DELETE FROM health_cache');
   getDb().exec('DELETE FROM plots');
 }
 
@@ -244,6 +296,27 @@ export class SqlitePlotStore implements PlotStore {
 
   async listPlotsNear(lat: number, lng: number, radiusM: number): Promise<PlotWithDistance[]> {
     return listPlotsNearSync(lat, lng, radiusM);
+  }
+
+  async updatePlot(id: string, value: NormalizedPlot): Promise<Plot | null> {
+    return updatePlotSync(id, value);
+  }
+
+  async getCachedHealth(plotId: string, key: string): Promise<unknown | null> {
+    const row = getDb()
+      .prepare('SELECT payload FROM health_cache WHERE plot_id = ? AND cache_key = ?')
+      .get(plotId, key) as { payload: string } | undefined;
+    return row ? (JSON.parse(row.payload) as unknown) : null;
+  }
+
+  async putCachedHealth(plotId: string, key: string, payload: unknown): Promise<void> {
+    const db = getDb();
+    db.prepare('DELETE FROM health_cache WHERE plot_id = ? AND cache_key <> ?').run(plotId, key);
+    db.prepare('INSERT OR REPLACE INTO health_cache (plot_id, cache_key, payload) VALUES (?, ?, ?)').run(
+      plotId,
+      key,
+      JSON.stringify(payload),
+    );
   }
 
   async deletePlot(id: string): Promise<boolean> {

@@ -102,9 +102,15 @@ export function plotToFeature(plot: Plot): Feature<Polygon> {
       centroid_lat: plot.centroid_lat,
       centroid_lng: plot.centroid_lng,
       landmark_note: plot.landmark_note,
+      exclusions: plot.exclusions,
       created_at: plot.created_at,
     },
   };
+}
+
+/** True when (lat, lng) lies inside [polygon]. */
+export function pointInPolygon(lat: number, lng: number, polygon: Polygon): boolean {
+  return turf.booleanPointInPolygon(turf.point([lng, lat]), polygon);
 }
 
 /** Bounding box `[west, south, east, north]` of a polygon, for map fitting. */

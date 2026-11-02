@@ -1,7 +1,7 @@
 import * as turf from '@turf/turf';
 import { METRES_PER_DEG_LAT, METRES_PER_DEG_LNG_AT_EQUATOR } from './constants.js';
 import { geodesicAreaSqM, polygonBbox, ringToPolygon } from './geo.js';
-import type { Polygon } from './types.js';
+import type { PathExclusion, Polygon } from './types.js';
 
 /**
  * Crop condition as a grid of 3 m cells graded on three indices, plus the
@@ -151,8 +151,28 @@ export interface HealthSnapshot {
   patches: HealthPatch[];
 }
 
-/** Samples one index at a position. Real ingest passes a raster reader here. */
+/**
+ * Samples one index at a position. Returns NaN where there is no reading - a
+ * cloud, its shadow, or the edge of the image - and the cell is then left out.
+ */
 export type IndexSampler = (lat: number, lng: number) => number;
+
+/**
+ * True when a cell centred at (lat, lng) is covered by one of the [paths].
+ *
+ * Covered means the path's strip reaches within a quarter cell of the cell's
+ * centre: a 2 m path through the middle of a 3 m cell takes it out; one that
+ * only clips its corner does not. The bare strip would otherwise be graded as
+ * failing crop, which on a vineyard track is every cell along it, in red.
+ */
+export function coveredByPath(lat: number, lng: number, paths: readonly PathExclusion[], cellSizeM: number): boolean {
+  if (paths.length === 0) return false;
+  const point = turf.point([lng, lat]);
+  return paths.some((path) => {
+    const reach = path.width_m / 2 + cellSizeM / 4;
+    return turf.pointToLineDistance(point, turf.lineString(path.line), { units: 'meters' }) <= reach;
+  });
+}
 
 export function classifyZone(value: number, edges: readonly [number, number]): Severity {
   if (value < edges[0]) return ZONE_CRITICAL;
@@ -176,8 +196,18 @@ export function buildHealthSnapshot(options: {
   capturedOn: string;
   cellSizeM?: number;
   source?: string;
+  /** Paths inside the plot: their cells are left out entirely. */
+  exclusions?: readonly PathExclusion[];
 }): HealthSnapshot {
-  const { plotId, polygon, samplers, capturedOn, cellSizeM = CELL_SIZE_M, source = 'synthetic' } = options;
+  const {
+    plotId,
+    polygon,
+    samplers,
+    capturedOn,
+    cellSizeM = CELL_SIZE_M,
+    source = 'synthetic',
+    exclusions = [],
+  } = options;
 
   const [minLng, minLat, maxLng, maxLat] = polygonBbox(polygon);
   const midLat = (minLat + maxLat) / 2;
@@ -198,6 +228,7 @@ export function buildHealthSnapshot(options: {
       const centroidLat = south + degLat / 2;
 
       if (!turf.booleanPointInPolygon(turf.point([centroidLng, centroidLat]), polygon)) continue;
+      if (coveredByPath(centroidLat, centroidLng, exclusions, cellSizeM)) continue;
 
       const square = ringToPolygon([
         [west, south],
@@ -213,11 +244,20 @@ export function buildHealthSnapshot(options: {
 
       const values = {} as IndexValues;
       const zones = {} as IndexZones;
+      let readable = true;
       for (const spec of HEALTH_INDICES) {
-        const value = round3(samplers[spec.key](centroidLat, centroidLng));
+        const raw = samplers[spec.key](centroidLat, centroidLng);
+        if (!Number.isFinite(raw)) {
+          readable = false;
+          break;
+        }
+        const value = round3(raw);
         values[spec.key] = value;
         zones[spec.key] = classifyZone(value, spec.edges);
       }
+      // A cell with no reading on some index - under a cloud - is left out
+      // rather than guessed: an empty square is honest, a coloured one is not.
+      if (!readable) continue;
       cells.push({ col, row, centroid_lat: centroidLat, centroid_lng: centroidLng, cell: clipped, values, zones });
     }
   }

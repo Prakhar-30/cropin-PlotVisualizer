@@ -42,6 +42,18 @@ export interface PlotStore {
   /** Plots whose centroid is within `radiusM`, nearest first. */
   listPlotsNear(lat: number, lng: number, radiusM: number): Promise<PlotWithDistance[]>;
 
+  /**
+   * Replaces a plot's boundary, name, note and paths; keeps its id, colour and
+   * creation time. Null when there is no such plot.
+   */
+  updatePlot(id: string, value: NormalizedPlot): Promise<Plot | null>;
+
+  /** A stored crop-condition result, or null. See routes/health.ts. */
+  getCachedHealth(plotId: string, key: string): Promise<unknown | null>;
+
+  /** Stores a crop-condition result, replacing any other for the plot. */
+  putCachedHealth(plotId: string, key: string, payload: unknown): Promise<void>;
+
   /** Removes one plot and its health snapshots. False when no such plot. */
   deletePlot(id: string): Promise<boolean>;
 

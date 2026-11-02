@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import {
   generatePlotId,
   type NormalizedPlot,
+  type PathExclusion,
   type Plot,
   type PlotWithDistance,
   type Polygon,
@@ -33,7 +34,10 @@ interface PlotApiRow {
   area_sq_m: number;
   landmark_note: string;
   colour_index: number;
+  /** Absent until migration 005 has been run. */
+  exclusions?: PathExclusion[] | null;
   created_at: string;
+  updated_at?: string | null;
 }
 
 const MAX_ID_ATTEMPTS = 20;
@@ -51,9 +55,14 @@ function rowToPlot(row: PlotApiRow): Plot {
     area_sq_m: row.area_sq_m,
     landmark_note: row.landmark_note,
     colour_index: row.colour_index,
+    exclusions: row.exclusions ?? [],
     created_at: row.created_at,
+    ...(row.updated_at ? { updated_at: row.updated_at } : {}),
   };
 }
+
+/** PostgREST could not find a function with these arguments: a migration is missing. */
+const FUNCTION_NOT_FOUND = 'PGRST202';
 
 export class SupabasePlotStore implements PlotStore {
   readonly kind = 'supabase' as const;
@@ -85,15 +94,21 @@ export class SupabasePlotStore implements PlotStore {
   async insertPlot(value: NormalizedPlot, forcedId?: string): Promise<Plot> {
     for (let attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt++) {
       const id = forcedId ?? generatePlotId();
-      const { data, error } = await this.client
-        .rpc('fieldar_create_plot', {
-          p_id: id,
-          p_name: value.name,
-          p_polygon: value.polygon,
-          p_area_sq_m: value.area_sq_m,
-          p_landmark_note: value.landmark_note,
-        })
+      const args = {
+        p_id: id,
+        p_name: value.name,
+        p_polygon: value.polygon,
+        p_area_sq_m: value.area_sq_m,
+        p_landmark_note: value.landmark_note,
+      };
+      let { data, error } = await this.client
+        .rpc('fieldar_create_plot', { ...args, p_exclusions: value.exclusions })
         .select();
+      // Before migration 005 the function takes no paths. A plot without paths
+      // can still be saved through it, so drawing keeps working in between.
+      if (error?.code === FUNCTION_NOT_FOUND && value.exclusions.length === 0) {
+        ({ data, error } = await this.client.rpc('fieldar_create_plot', args).select());
+      }
 
       if (!error) {
         const row = (data as PlotApiRow[] | null)?.[0];
@@ -143,6 +158,45 @@ export class SupabasePlotStore implements PlotStore {
       ...rowToPlot(row),
       distance_m: row.distance_m,
     }));
+  }
+
+  async updatePlot(id: string, value: NormalizedPlot): Promise<Plot | null> {
+    const { data, error } = await this.client
+      .rpc('fieldar_update_plot', {
+        p_id: id,
+        p_name: value.name,
+        p_polygon: value.polygon,
+        p_area_sq_m: value.area_sq_m,
+        p_landmark_note: value.landmark_note,
+        p_exclusions: value.exclusions,
+      })
+      .select();
+    if (error) {
+      throw new Error(
+        `update failed: ${error.message}. If the function is missing, run service/sql/005_paths_edit_satellite.sql.`,
+      );
+    }
+    const row = (data as PlotApiRow[] | null)?.[0];
+    return row ? rowToPlot(row) : null;
+  }
+
+  // The cache is an optimisation: before migration 005, or on any error, it
+  // simply misses, and crop condition is computed afresh.
+  async getCachedHealth(plotId: string, key: string): Promise<unknown | null> {
+    const { data, error } = await this.client.rpc('fieldar_health_cache_get', {
+      p_plot_id: plotId,
+      p_cache_key: key,
+    });
+    return error ? null : ((data as unknown) ?? null);
+  }
+
+  async putCachedHealth(plotId: string, key: string, payload: unknown): Promise<void> {
+    const { error } = await this.client.rpc('fieldar_health_cache_put', {
+      p_plot_id: plotId,
+      p_cache_key: key,
+      p_payload: payload,
+    });
+    if (error) console.warn(`health cache not written: ${error.message}`);
   }
 
   async deletePlot(id: string): Promise<boolean> {
