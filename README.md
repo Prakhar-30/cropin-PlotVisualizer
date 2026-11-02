@@ -42,6 +42,8 @@ Run these against your Supabase project, in order, in the SQL editor:
 | `service/sql/001_fieldar_schema.sql` | Tables, indexes, RLS, and the `?near=` function, all inside a `fieldar` schema |
 | `service/sql/002_api_surface.sql` | The `public.fieldar_*` wrappers PostgREST actually serves |
 | `service/sql/003_updated_flow.sql` | **Wipes every plot**, removes the access point, narrows zones to three |
+| `service/sql/004_delete_plot.sql` | The function behind the *Delete* buttons |
+| `service/sql/005_paths_edit_satellite.sql` | Paths inside plots, editing plots, and the satellite-result cache. Keeps every plot |
 
 001 and 002 are idempotent and additive. **003 is destructive on purpose**: the
 updated flow starts from a clean slate, so it deletes all plots (and their stored
@@ -148,12 +150,53 @@ Plots can be deleted from the Plots page or from the map (tap a plot, then
 *Delete plot* in the Mark a plot panel). On Supabase this needs
 `service/sql/004_delete_plot.sql`.
 
-**The values are demonstration values.** `syntheticSamplers` is deterministic per
-plot and shaped like a real field: a healthy body, one or two patches where the
-canopy thins (NDVI and NDRE fall together), and a separate dry patch for LSWI.
-Every response carries `synthetic: true` and the map says so. Wiring real
-Sentinel-2 means replacing those samplers - nothing downstream knows where the
-numbers came from.
+**Editing a plot.** Tap a plot, then *Edit plot*: drag a corner to move it,
+right-click it to remove it, change the name, note or paths, and *Save changes*.
+The id and colour stay; the area is recomputed by the server as on create, and
+crop condition is recomputed for the new shape. `PUT /api/plots/:id`.
+
+**Paths.** Once a shape is closed (new or edited), *Add path*, click along a
+walking path or track inside the plot, then *Finish path* or double-click. Each
+path has a width (default 2 m). A 3 m cell is left out of crop condition when a
+path's strip reaches within a quarter cell of its centre, so a bare track is not
+graded as a line of failing crop, and no drop point lands on it - in the field
+app too. Paths are drawn on the map at their true width.
+
+### Where the numbers come from: Sentinel-2
+
+Crop condition is read from **Sentinel-2 Level-2A** surface reflectance - the
+open archive on AWS, found through Element 84's Earth Search STAC API. No
+account or key.
+
+| Index | Bands | Pixel |
+|---|---|---|
+| NDVI, crop greenness | (B08 − B04) / (B08 + B04) | 10 m |
+| NDRE, crop vigour | (B8A − B05) / (B8A + B05) | 20 m |
+| LSWI, water stress | (B8A − B11) / (B8A + B11) | 20 m |
+
+- **Scene:** the newest of the last 60 days with at least 80% of the plot clear,
+  judged by the scene's own Scene Classification layer (SCL). Cells under cloud
+  or cloud shadow are left out rather than coloured.
+- **Pixels to cells:** each 3 m cell takes the bilinear blend of the four pixel
+  centres around it. The grid keeps its shape and patches still form, but detail
+  finer than a 10-20 m pixel is not in the data; the map and the API say so.
+- **Reading:** only the tiles over the plot are fetched from each band's
+  Cloud-Optimised GeoTIFF, with HTTP range requests (`service/src/satellite/`,
+  no dependencies). About 2 s for a plot, measured in CI.
+- **Cache:** the result is stored (`fieldar.health_cache`), keyed by the plot's
+  boundary and paths and the week, so edits and newer scenes recompute and
+  everything else is served at once.
+- **Fallback:** with no clear scene, or no network, demonstration values are
+  served instead, flagged `synthetic: true` with the reason, and retried after
+  ten minutes. `HEALTH_SOURCE=synthetic` forces them (the tests do).
+
+`npm run probe -w @plot/api -- <lat> <lng>` reads a real scene for a 65 m
+square and prints the spread of each index; CI runs it on every push.
+
+The zone edges (NDVI 0.35 / 0.55, NDRE 0.20 / 0.35, LSWI 0.05 / 0.20) are
+fixed agronomic thresholds. On real imagery they are crop- and season-dependent:
+a dry-season plot can read LSWI below zero everywhere and so be critical
+throughout. Tune them in `shared/src/health.ts` against plots you know.
 
 There is no access point any more: the field app anchors on the nearest point of
 a plot's boundary.
