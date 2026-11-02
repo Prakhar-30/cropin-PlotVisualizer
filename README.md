@@ -135,6 +135,12 @@ same three zones so they read the same way:
 | NDRE | Crop vigour | < 0.20 | 0.20 – 0.35 | ≥ 0.35 |
 | LSWI | Water stress | < 0.05 | 0.05 – 0.20 | ≥ 0.20 |
 
+**Drop points.** A long patch - a strip down a whole edge, an L or a U - is
+split into pieces every 25-50 m, each its own drop point, and every drop point
+stands on one of its piece's worst cells, the one deepest inside the patch: a
+red point is on red ground, and never in the healthy middle of a U or on the
+boundary line.
+
 `GET /api/plots/:id/health` returns every cell with all three values and zones,
 a per-index summary, and the **patches**: touching moderate-or-critical cells
 (at least two), one per patch, ranked worst first per index. The field app turns
@@ -178,7 +184,9 @@ account or key.
   judged by the scene's own Scene Classification layer (SCL). Cells under cloud
   or cloud shadow are left out rather than coloured.
 - **Pixels to cells:** each 3 m cell takes the bilinear blend of the four pixel
-  centres around it. The grid keeps its shape and patches still form, but detail
+  centres around it - counting only pixels whose centres are inside the plot,
+  so the road or bund outside a boundary does not bleed into the edge cells as
+  a band of false stress. The grid keeps its shape and patches still form, but detail
   finer than a 10-20 m pixel is not in the data; the map and the API say so.
 - **Reading:** only the tiles over the plot are fetched from each band's
   Cloud-Optimised GeoTIFF, with HTTP range requests (`service/src/satellite/`,
