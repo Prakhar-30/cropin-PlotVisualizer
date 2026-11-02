@@ -8,6 +8,7 @@ import { LocateButton } from '../components/LocateButton.js';
 import { SearchBox } from '../components/SearchBox.js';
 import { emptyDrawState, PlotDrawController, type DrawState } from '../lib/drawController.js';
 import { CurrentLocationLayer } from '../lib/currentLocationLayer.js';
+import { emptyPathState, PathDrawController, type PathDrawState } from '../lib/pathDrawController.js';
 import { PlotHealthLayer } from '../lib/healthLayer.js';
 import { SavedPlotsLayer } from '../lib/plotsLayer.js';
 import { useMapLibre } from '../lib/useMapLibre.js';
@@ -19,6 +20,7 @@ export function MapPage() {
   const savedLayer = useRef<SavedPlotsLayer | null>(null);
   const healthLayer = useRef<PlotHealthLayer | null>(null);
   const hereLayer = useRef<CurrentLocationLayer | null>(null);
+  const pathsLayer = useRef<PathDrawController | null>(null);
 
   const [drawState, setDrawState] = useState<DrawState>(emptyDrawState);
   const [plots, setPlotList] = useState<Plot[]>([]);
@@ -28,6 +30,9 @@ export function MapPage() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<Plot | null>(null);
   const [deleting, setDeleting] = useState(false);
+  /** The saved plot being edited, or null when drawing a new one. */
+  const [editing, setEditing] = useState<Plot | null>(null);
+  const [pathState, setPathState] = useState<PathDrawState>(emptyPathState);
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [healthOn, setHealthOn] = useState(true);
@@ -65,12 +70,17 @@ export function MapPage() {
     const grid = new PlotHealthLayer(map, layer.bottomLayerId());
     const here = new CurrentLocationLayer(map, layer.bottomLayerId());
     const draw = new PlotDrawController(map, setDrawState);
+    // Paths sit over the health grid and under the boundaries, like the ground they are.
+    const paths = new PathDrawController(map, setPathState, layer.bottomLayerId());
     savedLayer.current = layer;
+    pathsLayer.current = paths;
     healthLayer.current = grid;
     hereLayer.current = here;
     controller.current = draw;
     void refreshPlots();
     return () => {
+      paths.destroy();
+      pathsLayer.current = null;
       draw.destroy();
       here.destroy();
       grid.destroy();
@@ -83,8 +93,39 @@ export function MapPage() {
   }, [map, refreshPlots]);
 
   useEffect(() => {
-    savedLayer.current?.setPlots(plots);
-  }, [map, plots]);
+    // The plot being edited is drawn by the editor, not as a saved plot.
+    savedLayer.current?.setPlots(plots.filter((p) => p.id !== editing?.id));
+    pathsLayer.current?.setSaved(plots, editing?.id ?? null);
+  }, [map, plots, editing]);
+
+  /** Forgets a plot's crop condition, so it is fetched again - after an edit. */
+  const refetchHealth = (id: string) => {
+    healthRequested.current.delete(id);
+    setHealthByPlot((current) => {
+      const next = new Map(current);
+      next.delete(id);
+      return next;
+    });
+  };
+
+  const stopEditing = () => {
+    setEditing(null);
+    setName('');
+    setNote('');
+    controller.current?.reset();
+    pathsLayer.current?.clear();
+  };
+
+  const handleEdit = (plot: Plot) => {
+    setSaved(null);
+    setError(null);
+    setEditing(plot);
+    setName(plot.name);
+    setNote(plot.landmark_note);
+    controller.current?.load(plot.polygon);
+    pathsLayer.current?.load(plot.exclusions);
+    setMobilePanel('draw');
+  };
 
   // `?focus=PLT-4471` is how the list page zooms the map to a row.
   const focusId = searchParams.get('focus');
@@ -147,15 +188,16 @@ export function MapPage() {
     setSaving(true);
     setError(null);
     try {
-      const plot = await api.createPlot({
+      const input = {
         name,
         polygon,
         landmark_note: note,
-      });
+        exclusions: pathsLayer.current?.toExclusions() ?? [],
+      };
+      const plot = editing ? await api.updatePlot(editing.id, input) : await api.createPlot(input);
+      if (editing) refetchHealth(plot.id);
       setSaved(plot);
-      setName('');
-      setNote('');
-      controller.current?.reset();
+      stopEditing();
       await refreshPlots();
     } catch (err) {
       setError((err as ApiRequestError).fullMessage);
@@ -173,6 +215,7 @@ export function MapPage() {
     try {
       await api.deletePlot(plot.id);
       if (saved?.id === plot.id) setSaved(null);
+      if (editing?.id === plot.id) stopEditing();
       setSearchParams({});
       await refreshPlots();
     } catch (err) {
@@ -255,16 +298,27 @@ export function MapPage() {
           setSaved(null);
           setError(null);
           controller.current?.startNew();
+          pathsLayer.current?.clear();
         }}
         onClear={() => {
           setSaved(null);
           setError(null);
           controller.current?.reset();
+          pathsLayer.current?.clear();
         }}
         onSave={handleSave}
         selected={selectedPlot}
         deleting={deleting}
         onDelete={(plot) => void handleDelete(plot)}
+        onEdit={handleEdit}
+        editing={editing}
+        onCancelEdit={stopEditing}
+        paths={pathState}
+        onAddPath={() => pathsLayer.current?.startPath()}
+        onFinishPath={() => pathsLayer.current?.finishPath()}
+        onCancelPath={() => pathsLayer.current?.cancelPath()}
+        onRemovePath={(i) => pathsLayer.current?.removePath(i)}
+        onPathWidth={(w) => pathsLayer.current?.setWidth(w)}
       />
     </div>
   );

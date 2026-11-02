@@ -2,12 +2,16 @@ import {
   formatAcres,
   formatDistance,
   formatHectares,
+  MAX_PATH_WIDTH_M,
   MAX_PLOT_AREA_HA,
+  MIN_PATH_WIDTH_M,
   ringToPolygon,
+  type PathExclusion,
   validatePlotInput,
   type Plot,
 } from '@plot/shared';
 import type { DrawState } from '../lib/drawController.js';
+import { pathLengthM, type PathDrawState } from '../lib/pathDrawController.js';
 
 interface Props {
   state: DrawState;
@@ -23,10 +27,21 @@ interface Props {
   onUndo: () => void;
   onClose: () => void;
   onSave: () => void;
-  /** The saved plot tapped on the map, offered for deletion. */
+  /** The saved plot tapped on the map, offered for editing and deletion. */
   selected: Plot | null;
   deleting: boolean;
   onDelete: (plot: Plot) => void;
+  onEdit: (plot: Plot) => void;
+  /** The plot being edited, or null when drawing a new one. */
+  editing: Plot | null;
+  onCancelEdit: () => void;
+  /** Walking paths of the plot being drawn or edited. */
+  paths: PathDrawState;
+  onAddPath: () => void;
+  onFinishPath: () => void;
+  onCancelPath: () => void;
+  onRemovePath: (index: number) => void;
+  onPathWidth: (widthM: number) => void;
   /** Hidden on a phone while the health panel is showing. */
   className?: string;
 }
@@ -41,7 +56,7 @@ const HINTS: Record<DrawState['mode'], string> = {
  * Runs the shared validator so the panel reports exactly what the API would
  * reject, instead of keeping a second copy of the rules in the browser.
  */
-function blockers(state: DrawState, name: string, note: string): string[] {
+function blockers(state: DrawState, name: string, note: string, paths: PathExclusion[]): string[] {
   if (state.vertices.length === 0) return ['Draw the plot boundary'];
   if (!state.closed) return ['Close the shape'];
 
@@ -49,6 +64,7 @@ function blockers(state: DrawState, name: string, note: string): string[] {
     name,
     polygon: ringToPolygon(state.vertices),
     landmark_note: note,
+    exclusions: paths,
   });
   return result.ok ? [] : result.errors;
 }
@@ -56,13 +72,19 @@ function blockers(state: DrawState, name: string, note: string): string[] {
 export function DrawPanel(props: Props) {
   const { state, name, note, saving, error, saved } = props;
   const measurable = state.vertices.length >= 3;
-  const problems = blockers(state, name, note);
+  const { editing, paths } = props;
+  const problems = blockers(state, name, note, paths.paths);
+  if (paths.current) problems.push('Finish or cancel the path being drawn');
 
   return (
     <aside className={`panel ${props.className ?? ''}`}>
       <header className="panel-header">
-        <h1>Mark a plot</h1>
-        <p className="hint">{HINTS[state.mode]}</p>
+        <h1>{editing ? `Edit ${editing.id}` : 'Mark a plot'}</h1>
+        <p className="hint">
+          {editing && state.mode === 'ready'
+            ? 'Drag a corner to move it, right-click it to remove it. Add or remove paths below, then save.'
+            : HINTS[state.mode]}
+        </p>
       </header>
 
       <section className="measurements">
@@ -109,6 +131,64 @@ export function DrawPanel(props: Props) {
         />
       </div>
 
+      {state.closed && (
+        <section className="paths">
+          <div className="paths__head">
+            <span className="label">Paths - not graded</span>
+            <label className="paths__width">
+              width
+              <input
+                type="number"
+                min={MIN_PATH_WIDTH_M}
+                max={MAX_PATH_WIDTH_M}
+                step={0.5}
+                value={paths.widthM}
+                onChange={(e) => {
+                  const w = Number(e.target.value);
+                  if (Number.isFinite(w)) props.onPathWidth(w);
+                }}
+              />
+              m
+            </label>
+          </div>
+          <p className="hint">
+            {paths.current
+              ? `Click along the path (${paths.current.length} point${paths.current.length === 1 ? '' : 's'}), then Finish path or double-click.`
+              : 'Walking paths and tracks inside the plot. Their cells get no crop colours.'}
+          </p>
+          {paths.paths.length > 0 && (
+            <ul className="paths__list">
+              {paths.paths.map((path, i) => (
+                <li key={i}>
+                  <span>
+                    Path {i + 1} · {formatDistance(pathLengthM(path))} long · {path.width_m} m wide
+                  </span>
+                  <button type="button" className="ghost small" onClick={() => props.onRemovePath(i)} aria-label={`Remove path ${i + 1}`}>
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="actions">
+            {paths.current ? (
+              <>
+                <button type="button" disabled={paths.current.length < 2} onClick={props.onFinishPath}>
+                  Finish path
+                </button>
+                <button type="button" className="ghost" onClick={props.onCancelPath}>
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button type="button" onClick={props.onAddPath}>
+                Add path
+              </button>
+            )}
+          </div>
+        </section>
+      )}
+
       {problems.length > 0 && state.vertices.length > 0 && (
         <ul className="blockers">
           {problems.map((p) => (
@@ -137,23 +217,31 @@ export function DrawPanel(props: Props) {
       )}
 
       <div className="actions">
-        <button type="button" onClick={props.onStartNew}>
-          New plot
-        </button>
-        <button type="button" className="ghost" onClick={props.onClear}>
-          Clear
-        </button>
+        {editing ? (
+          <button type="button" className="ghost" onClick={props.onCancelEdit}>
+            Cancel edit
+          </button>
+        ) : (
+          <>
+            <button type="button" onClick={props.onStartNew}>
+              New plot
+            </button>
+            <button type="button" className="ghost" onClick={props.onClear}>
+              Clear
+            </button>
+          </>
+        )}
         <button
           type="button"
           className="primary"
           disabled={problems.length > 0 || saving}
           onClick={props.onSave}
         >
-          {saving ? 'Saving…' : 'Save plot'}
+          {saving ? 'Saving…' : editing ? 'Save changes' : 'Save plot'}
         </button>
       </div>
 
-      {props.selected && (
+      {props.selected && !editing && (
         <section className="selected-plot">
           <div>
             <span className="label">Selected plot</span>
@@ -162,14 +250,19 @@ export function DrawPanel(props: Props) {
               {props.selected.id} · {formatHectares(props.selected.area_sq_m)}
             </span>
           </div>
-          <button
-            type="button"
-            className="danger"
-            disabled={props.deleting}
-            onClick={() => props.onDelete(props.selected!)}
-          >
-            {props.deleting ? 'Deleting…' : 'Delete plot'}
-          </button>
+          <div className="selected-plot__actions">
+            <button type="button" onClick={() => props.onEdit(props.selected!)}>
+              Edit plot
+            </button>
+            <button
+              type="button"
+              className="danger"
+              disabled={props.deleting}
+              onClick={() => props.onDelete(props.selected!)}
+            >
+              {props.deleting ? 'Deleting…' : 'Delete'}
+            </button>
+          </div>
         </section>
       )}
     </aside>

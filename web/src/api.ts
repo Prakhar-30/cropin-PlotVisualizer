@@ -58,6 +58,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export interface PlotHealth extends HealthSnapshot {
   synthetic: boolean;
   note: string;
+  /** The Sentinel-2 scene the values come from, when they do. */
+  scene?: { id: string; date: string; clearShare: number; cloudCoverPct: number };
 }
 
 export const api = {
@@ -77,6 +79,14 @@ export const api = {
   /** Removes the plot and its crop-condition snapshots. Cannot be undone. */
   deletePlot: (id: string) =>
     request<{ deleted: string }>(`/plots/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  /** Replaces a plot's boundary, name, note and paths. */
+  updatePlot: (id: string, input: PlotInput) =>
+    request<Plot>(`/plots/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    }),
 
   createPlot: (input: PlotInput) =>
     request<Plot>('/plots', {

@@ -108,6 +108,11 @@ export function plotToFeature(plot: Plot): Feature<Polygon> {
   };
 }
 
+/** Geodesic length of a line, metres. */
+export function lineLengthM(line: Position[]): number {
+  return line.length < 2 ? 0 : turf.length(turf.lineString(line), { units: 'meters' });
+}
+
 /** True when (lat, lng) lies inside [polygon]. */
 export function pointInPolygon(lat: number, lng: number, polygon: Polygon): boolean {
   return turf.booleanPointInPolygon(turf.point([lng, lat]), polygon);
