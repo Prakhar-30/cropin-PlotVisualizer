@@ -304,7 +304,7 @@ test('blend: pixels wholly inside the plot are preferred to ones merely centred 
   const wholly = (x: number, y: number) => inside(x, y) && distanceToRingXY(plot, x, y) >= band.halfDiagonal;
   const x = 600106;
   const y = 1419905;
-  assert.equal(band.blend(x, y, inside), 300 * 0.9 + 500 * 0.1, 'centred-inside alone keeps the mixed pixel');
+  assert.ok(Math.abs(band.blend(x, y, inside) - 320) < 1e-9, 'centred-inside alone keeps the mixed pixel');
   assert.equal(band.blend(x, y, wholly, inside), 500, 'wholly-inside first takes the crop');
 });
 
