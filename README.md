@@ -135,11 +135,20 @@ same three zones so they read the same way:
 | NDRE | Crop vigour | < 0.20 | 0.20 – 0.35 | ≥ 0.35 |
 | LSWI | Water stress | < 0.05 | 0.05 – 0.20 | ≥ 0.20 |
 
-**Drop points.** A long patch - a strip down a whole edge, an L or a U - is
-split into pieces every 25-50 m, each its own drop point, and every drop point
-stands on one of its piece's worst cells, the one deepest inside the patch: a
-red point is on red ground, and never in the healthy middle of a U or on the
-boundary line.
+**Drop points mark what stands out.** Zones are absolute, so the colours say
+how the crop is - a vineyard in late October reads moderate for water almost
+everywhere, and the map shows that. A drop point means "go here, it is worse
+than the rest", so it marks cells that are moderate or critical *and* clearly
+below the plot's own median (a quarter of the index's moderate band: NDVI 0.05,
+NDRE and LSWI about 0.04). A plot that is mostly moderate or critical with
+nothing standing out gets one drop point for the whole plot, in its middle. A
+thin strip of hotspot cells along an edge is split into pieces every 25-50 m; a
+compact patch stays one. Each point stands on one of its piece's worst cells,
+the one deepest inside it. At most 6 per plot and index.
+
+`npm run audit -w @plot/api -- <api url>` recomputes every plot of a deployed
+API with the checked-out code and prints zone shares and drop points per plot;
+CI runs it against the live plots.
 
 `GET /api/plots/:id/health` returns every cell with all three values and zones,
 a per-index summary, and the **patches**: touching moderate-or-critical cells
@@ -184,9 +193,10 @@ account or key.
   judged by the scene's own Scene Classification layer (SCL). Cells under cloud
   or cloud shadow are left out rather than coloured.
 - **Pixels to cells:** each 3 m cell takes the bilinear blend of the four pixel
-  centres around it - counting only pixels whose centres are inside the plot,
-  so the road or bund outside a boundary does not bleed into the edge cells as
-  a band of false stress. The grid keeps its shape and patches still form, but detail
+  centres around it - counting only pixels wholly inside the plot (centred at
+  least half a pixel diagonal in), then if none, pixels centred inside it, so the
+  road or bund outside a boundary does not bleed into the edge cells as a band
+  of false stress. The grid keeps its shape and patches still form, but detail
   finer than a 10-20 m pixel is not in the data; the map and the API say so.
 - **Reading:** only the tiles over the plot are fetched from each band's
   Cloud-Optimised GeoTIFF, with HTTP range requests (`service/src/satellite/`,

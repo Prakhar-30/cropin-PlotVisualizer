@@ -467,7 +467,7 @@ test('an edge-hugging U of stress gets several drop points, each on the stress',
     }
   }
   const patches = findPatches(cells, 'ndvi', 3);
-  assert.ok(patches.length >= 4, `a 75-cell-long strip is several places, got ${patches.length}`);
+  assert.ok(patches.length >= 4 && patches.length <= 6, `a 75-cell-long strip is several places, got ${patches.length}`);
   const stressed = new Set(cells.filter((c) => c.zones.ndvi > 0).map((c) => `${c.centroid_lng},${c.centroid_lat}`));
   for (const p of patches) {
     assert.ok(stressed.has(`${p.centroid_lng},${p.centroid_lat}`), 'every drop point stands on a stressed cell');
@@ -476,7 +476,54 @@ test('an edge-hugging U of stress gets several drop points, each on the stress',
   assert.equal(red.length, 1);
   assert.deepEqual([red[0]!.centroid_lng, red[0]!.centroid_lat], [0, 15], 'the red point is on the red cell');
   assert.equal(patches[0]!.zone, 2, 'worst first');
-  const total = patches.reduce((sum, p) => sum + p.cell_count, 0);
-  assert.equal(total, stressed.size, 'every stressed cell belongs to exactly one drop point');
+});
+
+function grid(cols: number, rows: number, ndvi: (col: number, row: number) => number): HealthCell[] {
+  const cells: HealthCell[] = [];
+  for (let col = 0; col < cols; col++) {
+    for (let row = 0; row < rows; row++) {
+      const v = ndvi(col, row);
+      const zone = v < 0.35 ? 2 : v < 0.55 ? 1 : 0;
+      cells.push({
+        col,
+        row,
+        centroid_lat: row,
+        centroid_lng: col,
+        cell: { type: 'Polygon', coordinates: [] },
+        values: { ndvi: v, ndre: 0.4, lswi: 0.3 },
+        zones: { ndvi: zone as 0 | 1 | 2, ndre: 0, lswi: 0 },
+      });
+    }
+  }
+  return cells;
+}
+
+test('a uniformly moderate plot gets one drop point for the whole plot, in its middle', async () => {
+  const { findPatches } = await import('@plot/shared');
+  // Moderate everywhere with a little noise - a vineyard's water in October.
+  const cells = grid(30, 25, (c, r) => 0.45 + 0.01 * Math.sin(c * 1.3 + r * 0.7));
+  const patches = findPatches(cells, 'ndvi', 3);
+  assert.equal(patches.length, 1, `nothing stands out, so one point, got ${patches.length}`);
+  assert.equal(patches[0]!.zone, 1);
+  assert.equal(patches[0]!.cell_count, 750, 'it stands for the whole plot');
+  const [col, row] = [patches[0]!.centroid_lng, patches[0]!.centroid_lat];
+  assert.ok(col >= 10 && col <= 19 && row >= 8 && row <= 16, `in the middle, got ${col},${row}`);
+});
+
+test('a compact patch worse than the rest of the plot is one drop point, however large', async () => {
+  const { findPatches } = await import('@plot/shared');
+  // Normal plot, one 12 x 12 moderate blob.
+  const cells = grid(40, 40, (c, r) => (c >= 10 && c < 22 && r >= 10 && r < 22 ? 0.45 : 0.7));
+  const patches = findPatches(cells, 'ndvi', 3);
+  assert.equal(patches.length, 1);
+  assert.equal(patches[0]!.cell_count, 144);
+});
+
+test('a plot that is critical throughout gets one red point, not a field of them', async () => {
+  const { findPatches } = await import('@plot/shared');
+  const cells = grid(20, 20, (c) => 0.12 + 0.005 * (c % 3));
+  const patches = findPatches(cells, 'ndvi', 3);
+  assert.equal(patches.length, 1);
+  assert.equal(patches[0]!.zone, 2);
 });
 

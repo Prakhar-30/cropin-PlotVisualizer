@@ -112,8 +112,8 @@ healthRouter.get<{ id: string }>('/', async (req, res, next) => {
       return;
     }
 
-    // v2: inside-only pixel blending and segmented drop points.
-    const key = `s2v2:${geometryKey(plot)}:${weekOf(new Date())}`;
+    // v3: wholly-inside pixels at the edges, relative hotspots.
+    const key = `s2v3:${geometryKey(plot)}:${weekOf(new Date())}`;
     const remembered = memory.get(`${plot.id}:${key}`);
     if (remembered && remembered.until > Date.now()) {
       res.json(remembered.body);
