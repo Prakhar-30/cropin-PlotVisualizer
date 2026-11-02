@@ -18,4 +18,12 @@ export const config = {
   /** Both must be present for the Supabase driver to be selected. */
   supabaseUrl: process.env.SUPABASE_URL ?? '',
   supabaseSecretKey: process.env.SUPABASE_SECRET_KEY ?? '',
+
+  /**
+   * Where crop condition comes from: `sentinel` (the default) reads Sentinel-2
+   * imagery and falls back to demonstration values when there is none;
+   * `synthetic` always uses demonstration values - the test suite sets it so
+   * it never depends on the network.
+   */
+  healthSource: (process.env.HEALTH_SOURCE ?? 'sentinel') as 'sentinel' | 'synthetic',
 };

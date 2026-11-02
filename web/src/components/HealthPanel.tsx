@@ -61,11 +61,20 @@ export function HealthPanel({
 
   const counts = [0, 0, 0];
   const patches: ListedPatch[] = [];
-  let synthetic = false;
+  let demoPlots = 0;
+  let satellitePlots = 0;
+  let latestScene = '';
+  let demoReason = '';
   for (const plot of plots) {
     const snapshot = snapshots.get(plot.id);
     if (!snapshot) continue;
-    synthetic ||= snapshot.synthetic;
+    if (snapshot.synthetic) {
+      demoPlots++;
+      demoReason ||= snapshot.note;
+    } else {
+      satellitePlots++;
+      if (snapshot.scene && snapshot.scene.date > latestScene) latestScene = snapshot.scene.date;
+    }
     const summary = snapshot.indices.find((i) => i.key === index);
     summary?.zone_counts.forEach((n, zone) => (counts[zone] += n));
     for (const patch of snapshot.patches) {
@@ -107,7 +116,17 @@ export function HealthPanel({
 
       {enabled && total > 0 && (
         <>
-          {synthetic && <p className="health-panel__warning">Demo values — not yet from satellite imagery.</p>}
+          {satellitePlots > 0 && (
+            <p className="health-panel__hint">
+              Sentinel-2 · {satellitePlots} plot{satellitePlots === 1 ? '' : 's'} · latest scene {latestScene}. NDVI 10 m,
+              NDRE and LSWI 20 m pixels, blended into 3 m cells.
+            </p>
+          )}
+          {demoPlots > 0 && (
+            <p className="health-panel__warning" title={demoReason}>
+              Demo values for {demoPlots} plot{demoPlots === 1 ? '' : 's'} — no clear satellite scene could be read.
+            </p>
+          )}
 
           <ul className="health-legend">
             {ZONES.map((zone) => {

@@ -23,4 +23,10 @@ jobs:
       - run: node tools/gen-palette.mjs --check
       - run: npm run typecheck
       - run: npm run test:api
+      # Real Sentinel-2 over a plot in Karnataka, end to end. Informative, not
+      # gating: an outage of the public archive must not fail a build.
+      - name: Sentinel-2 probe
+        continue-on-error: true
+        timeout-minutes: 3
+        run: npm run build:shared && npm run probe -w @plot/api -- 12.7862 76.7201
       - run: npm run build -w @plot/web

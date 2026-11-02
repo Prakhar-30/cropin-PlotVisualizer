@@ -94,6 +94,31 @@ plotsRouter.get('/:id', async (req, res, next) => {
 });
 
 /**
+ * PUT /api/plots/:id - edit the boundary, name, note and paths. Validated and
+ * recomputed exactly as on create; the id, colour and creation time are kept.
+ * Crop condition follows by itself: its cache is keyed on the geometry.
+ */
+plotsRouter.put('/:id', async (req, res, next) => {
+  const result = validatePlotInput(req.body);
+  if (!result.ok) {
+    const { status, body } = fail(400, 'invalid plot', result.errors);
+    res.status(status).json(body);
+    return;
+  }
+  try {
+    const updated = await (await getReadyStore()).updatePlot(req.params.id, result.value);
+    if (!updated) {
+      const { status, body } = fail(404, 'plot not found');
+      res.status(status).json(body);
+      return;
+    }
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * DELETE /api/plots/:id - removes the plot and its health snapshots. Answers
  * with a JSON body rather than a bare 204 so every response the web client
  * parses is JSON.

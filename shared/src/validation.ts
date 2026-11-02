@@ -7,7 +7,7 @@ import {
   selfIntersections,
   sqMToHectares,
 } from './geo.js';
-import type { Polygon, Position } from './types.js';
+import type { PathExclusion, Polygon, Position } from './types.js';
 
 /**
  * The one validator. The API runs it on every write; the web app runs it before
@@ -18,6 +18,7 @@ export interface NormalizedPlot {
   name: string;
   polygon: Polygon;
   landmark_note: string;
+  exclusions: PathExclusion[];
   /** Recomputed here, never taken from the client. */
   area_sq_m: number;
   centroid_lat: number;
@@ -30,6 +31,43 @@ export type ValidationResult =
 
 const MAX_NAME_LEN = 120;
 const MAX_NOTE_LEN = 500;
+
+/** Paths per plot. Generous: a vineyard block has a dozen headland and row tracks. */
+export const MAX_PATHS = 60;
+export const MIN_PATH_WIDTH_M = 0.5;
+export const MAX_PATH_WIDTH_M = 15;
+export const DEFAULT_PATH_WIDTH_M = 2;
+
+/** Checks the paths, returning them tidied (rounded widths) or the problems. */
+function validateExclusions(value: unknown): { exclusions: PathExclusion[]; errors: string[] } {
+  if (value === undefined || value === null) return { exclusions: [], errors: [] };
+  if (!Array.isArray(value)) return { exclusions: [], errors: ['exclusions must be an array of paths'] };
+  if (value.length > MAX_PATHS) return { exclusions: [], errors: [`at most ${MAX_PATHS} paths per plot`] };
+  const exclusions: PathExclusion[] = [];
+  const errors: string[] = [];
+  value.forEach((raw, i) => {
+    const path = raw as Partial<PathExclusion> | null;
+    const line = path?.line;
+    if (
+      !Array.isArray(line) ||
+      line.length < 2 ||
+      line.some((p) => !Array.isArray(p) || p.length < 2 || !isLng(p[0]) || !isLat(p[1]))
+    ) {
+      errors.push(`path ${i + 1} needs at least two valid [lng, lat] points`);
+      return;
+    }
+    const width = path?.width_m;
+    if (!isFiniteNumber(width) || width < MIN_PATH_WIDTH_M || width > MAX_PATH_WIDTH_M) {
+      errors.push(`path ${i + 1} width must be between ${MIN_PATH_WIDTH_M} and ${MAX_PATH_WIDTH_M} m`);
+      return;
+    }
+    exclusions.push({
+      line: line.map((p) => [p[0], p[1]] as Position),
+      width_m: Math.round(width * 10) / 10,
+    });
+  });
+  return { exclusions, errors };
+}
 
 function isFiniteNumber(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v);
@@ -86,6 +124,9 @@ export function validatePlotInput(input: unknown): ValidationResult {
     errors.push('landmark_note must be a string');
   }
 
+  const paths = validateExclusions(body.exclusions);
+  errors.push(...paths.errors);
+
   const geom = body.polygon as Polygon | undefined;
   if (!geom || typeof geom !== 'object' || geom.type !== 'Polygon' || !Array.isArray(geom.coordinates)) {
     errors.push('polygon must be a GeoJSON Polygon');
@@ -124,6 +165,7 @@ export function validatePlotInput(input: unknown): ValidationResult {
       name,
       polygon,
       landmark_note,
+      exclusions: paths.exclusions,
       area_sq_m,
       centroid_lat,
       centroid_lng,

@@ -153,6 +153,18 @@ export class PlotDrawController extends MapOverlay {
     this.render();
   }
 
+  /**
+   * Loads a saved boundary for editing: closed, with every corner draggable
+   * and removable as when it was first drawn.
+   */
+  load(polygon: Polygon): void {
+    const ring = polygon.coordinates[0] ?? [];
+    this.vertices = ring.slice(0, -1).map((p) => [p[0]!, p[1]!] as Position);
+    this.closed = this.vertices.length >= 3;
+    this.mode = this.closed ? 'ready' : 'drawing';
+    this.render();
+  }
+
   /** The polygon exactly as it will be sent to the API, or null if incomplete. */
   toPolygon(): Polygon | null {
     if (this.vertices.length < 3) return null;

@@ -5,6 +5,7 @@
  *   npm run test -w @plot/api
  */
 process.env.DB_PATH = ':memory:';
+process.env.HEALTH_SOURCE = 'synthetic';
 
 import assert from 'node:assert/strict';
 import type { AddressInfo } from 'node:net';
@@ -383,4 +384,60 @@ test('deletes a plot, then reports it gone', async () => {
   // A second delete is a 404, not a silent success.
   const again = await fetch(`${base}/api/plots/${id}`, { method: 'DELETE' });
   assert.equal(again.status, 404);
+});
+
+/* ------------------------------------------------- editing plots, and paths */
+
+async function put(id: string, payload: unknown) {
+  const res = await fetch(`${base}/api/plots/${id}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return { status: res.status, json: (await res.json()) as Record<string, unknown> };
+}
+
+test('a plot can be edited: new boundary, name and paths, same id and colour', async () => {
+  const created = (await post(body(square(78.3, 14.2, 0.001)))).json as unknown as Plot;
+  const bigger = square(78.3, 14.2, 0.002);
+  const path = { line: [[78.299, 14.2], [78.301, 14.2]], width_m: 2 };
+  const { status, json } = await put(created.id, body(bigger, { name: 'Renamed', exclusions: [path] }));
+  assert.equal(status, 200);
+  const edited = json as unknown as Plot;
+  assert.equal(edited.id, created.id);
+  assert.equal(edited.colour_index, created.colour_index);
+  assert.equal(edited.name, 'Renamed');
+  assert.ok(edited.area_sq_m > created.area_sq_m * 3, 'area recomputed from the new boundary');
+  assert.deepEqual(edited.exclusions, [path]);
+  assert.deepEqual(((await get(`/api/plots/${created.id}`)).json as Plot).exclusions, [path]);
+
+  assert.equal((await put('PLT-0000', body(bigger))).status, 404);
+  const bad = await put(created.id, body(bigger, { exclusions: [{ line: [[78.3, 14.2]], width_m: 2 }] }));
+  assert.equal(bad.status, 400, 'a path needs two points');
+  const wide = await put(created.id, body(bigger, { exclusions: [{ ...path, width_m: 40 }] }));
+  assert.equal(wide.status, 400, 'a path is not 40 m wide');
+});
+
+test('cells on a path are left out of crop condition', async () => {
+  const ring = square(78.4, 14.3, 0.0008); // about 87 m across
+  const plot = (await post(body(ring))).json as unknown as Plot;
+  const before = (await get(`/api/plots/${plot.id}/health`)).json as HealthBody;
+
+  // A 2 m track straight across the middle, west to east.
+  const path = { line: [[78.3995, 14.3], [78.4005, 14.3]], width_m: 2 };
+  await put(plot.id, body(ring, { exclusions: [path] }));
+  const after = (await get(`/api/plots/${plot.id}/health`)).json as HealthBody;
+
+  assert.ok(after.cells.length < before.cells.length, 'some cells are gone');
+  // A 3 m cell is dropped when the 2 m path reaches within a quarter cell of its
+  // centre: 1.75 m either side of the line, so about one row of cells.
+  const lost = before.cells.length - after.cells.length;
+  assert.ok(lost >= 20 && lost <= 70, `lost ${lost} cells`);
+  for (const cell of after.cells) {
+    const metresFromLine = Math.abs(cell.centroid_lat - 14.3) * 110_540;
+    assert.ok(metresFromLine > 1.75 - 1e-6, `a cell ${metresFromLine.toFixed(2)} m from the path survived`);
+  }
+  for (const patch of after.patches) {
+    assert.ok(Math.abs(patch.centroid_lat - 14.3) * 110_540 > 1, 'no drop point stands on the path');
+  }
 });
