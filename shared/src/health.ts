@@ -299,6 +299,34 @@ function summarise(spec: IndexSpec, cells: HealthCell[]): IndexSummary {
  */
 export const PATCH_SEGMENT_CELLS = 8;
 
+/**
+ * A cell is a hotspot only when it is this share of its index's moderate band
+ * below the plot's own median - NDVI 0.05, NDRE and LSWI about 0.04.
+ *
+ * Zones are absolute, which is right for colouring: a vineyard in late
+ * October reads moderate for water and vigour nearly everywhere, and the map
+ * should say so. But a drop point means "go here, it is worse than the rest",
+ * and graded only by zone the whole plot qualified - twenty-five points spread
+ * over one uniform field. Relative to the plot's median, the points mark what
+ * stands out from it.
+ */
+export const HOTSPOT_BELOW_MEDIAN_SHARE = 0.25;
+
+/**
+ * When at least this share of a plot is moderate or critical but nothing in it
+ * stands out, the plot gets one drop point for the whole of it.
+ */
+export const WHOLE_PLOT_SHARE = 0.5;
+
+/** At most this many drop points per plot and index, worst first. */
+export const MAX_DROPS_PER_PLOT = 6;
+
+/**
+ * Only patches thinner than this, in cells on average, are split into pieces:
+ * a strip along an edge is several places to walk to, a compact blob is one.
+ */
+const THIN_PATCH_CELLS = 3;
+
 const NEIGHBOURS = [
   [1, 0],
   [-1, 0],
@@ -336,8 +364,9 @@ function bfsFrom(cells: Map<string, HealthCell>, seeds: string[]): Map<string, {
 /**
  * Splits one connected patch into pieces with no cell [PATCH_SEGMENT_CELLS]
  * or more steps from their own seed: farthest-point seeding along the patch,
- * then every cell to its nearest seed. A compact blob stays whole; an L or U
- * strip along the plot edges becomes a run of pieces along it.
+ * then every cell to its nearest seed - but only a thin one (narrower than
+ * [THIN_PATCH_CELLS] on average). An L or U strip along the plot edges becomes
+ * a run of pieces along it; a compact blob, however large, stays one.
  */
 function segment(cluster: HealthCell[]): HealthCell[][] {
   const cells = new Map(cluster.map((c) => [keyOf(c), c] as const));
@@ -346,6 +375,10 @@ function segment(cluster: HealthCell[]): HealthCell[][] {
   const fromAny = bfsFrom(cells, [keys[0]!]);
   let first = keys[0]!;
   for (const [key, { steps }] of fromAny) if (steps > fromAny.get(first)!.steps) first = key;
+  // Its length, end to end, against its area: average width in cells.
+  const fromEnd = bfsFrom(cells, [first]);
+  const length = Math.max(...[...fromEnd.values()].map((v) => v.steps)) + 1;
+  if (cluster.length / length >= THIN_PATCH_CELLS) return [cluster];
 
   const seeds = [first];
   let reach = bfsFrom(cells, seeds);
@@ -403,23 +436,50 @@ function dropCell(piece: HealthCell[], patch: Map<string, HealthCell>, worst: He
 }
 
 /**
- * Groups touching moderate-or-critical cells for one index into patches,
- * worst first, and gives each its drop point.
+ * The drop points of one index on one plot, worst first.
  *
- * Four-way connectivity, not eight. Diagonal-only neighbours share a single
- * corner on the ground; chaining through them merges two separate problems and
- * puts the drop point in the healthy gap between them. A long patch is split
- * into pieces every 25-50 m ([PATCH_SEGMENT_CELLS]), each its own drop point, and
- * every drop point stands on one of its piece's worst cells (see [dropCell]).
+ * A hotspot cell is moderate or critical *and* clearly below the plot's own
+ * median ([HOTSPOT_BELOW_MEDIAN_SHARE]); touching hotspot cells form a patch,
+ * four-way (diagonal-only neighbours share a single corner on the ground, and
+ * chaining through them puts the drop point in the healthy gap between two
+ * problems). A thin patch - a strip along an edge - is split into pieces every
+ * 25-50 m; a compact one stays one. Each drop point stands on one of its
+ * piece's worst cells, the deepest inside it (see [dropCell]). A plot that is
+ * mostly moderate or critical with nothing standing out gets a single drop
+ * point for the whole of it. At most [MAX_DROPS_PER_PLOT].
  */
 export function findPatches(cells: HealthCell[], index: IndexKey, cellSizeM: number = CELL_SIZE_M): HealthPatch[] {
+  if (cells.length === 0) return [];
+  const spec = indexSpec(index);
+  const sorted = cells.map((c) => c.values[index]).sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)]!;
+  const below = median - HOTSPOT_BELOW_MEDIAN_SHARE * (spec.edges[1] - spec.edges[0]);
+
+  // Hotspot cells: moderate or critical, and clearly worse than the plot's own norm.
   const flagged = new Map<string, HealthCell>();
+  let graded = 0;
   for (const cell of cells) {
-    if (cell.zones[index] >= ZONE_MODERATE) flagged.set(keyOf(cell), cell);
+    if (cell.zones[index] < ZONE_MODERATE) continue;
+    graded++;
+    if (cell.values[index] <= below) flagged.set(keyOf(cell), cell);
   }
 
+  const patches: Omit<HealthPatch, 'rank'>[] = [];
+  const add = (piece: HealthCell[], patch: Map<string, HealthCell>, zone: Severity) => {
+    const worst = piece.filter((c) => c.zones[index] === zone);
+    const at = dropCell(piece, patch, worst.length > 0 ? worst : piece);
+    patches.push({
+      index,
+      zone,
+      centroid_lat: at.centroid_lat,
+      centroid_lng: at.centroid_lng,
+      cell_count: piece.length,
+      area_sq_m: piece.length * cellSizeM * cellSizeM,
+      mean_value: round3(piece.reduce((sum, c) => sum + c.values[index], 0) / piece.length),
+    });
+  };
+
   const seen = new Set<string>();
-  const clusters: HealthCell[][] = [];
   for (const key of flagged.keys()) {
     if (seen.has(key)) continue;
     const cluster: HealthCell[] = [];
@@ -437,27 +497,27 @@ export function findPatches(cells: HealthCell[], index: IndexKey, cellSizeM: num
         }
       }
     }
-    if (cluster.length >= MIN_PATCH_CELLS) clusters.push(cluster);
-  }
-
-  const patches: Omit<HealthPatch, 'rank'>[] = [];
-  for (const cluster of clusters) {
+    if (cluster.length < MIN_PATCH_CELLS) continue;
     const patch = new Map(cluster.map((c) => [keyOf(c), c] as const));
     for (const piece of segment(cluster)) {
       if (piece.length < MIN_PATCH_CELLS) continue;
       // The piece's band is its worst cell: a patch with a red centre is red.
-      const zone = Math.max(...piece.map((c) => c.zones[index])) as Severity;
-      const worst = piece.filter((c) => c.zones[index] === zone);
-      const at = dropCell(piece, patch, worst);
-      patches.push({
-        index,
+      add(piece, patch, Math.max(...piece.map((c) => c.zones[index])) as Severity);
+    }
+  }
+
+  // Nothing stands out, but most of the plot is moderate or critical: one
+  // drop point for the whole plot, in the zone of its median, on the cell of
+  // that zone deepest inside it.
+  if (patches.length === 0 && graded >= WHOLE_PLOT_SHARE * cells.length) {
+    const zone = classifyZone(median, spec.edges);
+    if (zone >= ZONE_MODERATE) {
+      const all = new Map(cells.map((c) => [keyOf(c), c] as const));
+      add(
+        cells.filter((c) => c.zones[index] >= ZONE_MODERATE),
+        all,
         zone,
-        centroid_lat: at.centroid_lat,
-        centroid_lng: at.centroid_lng,
-        cell_count: piece.length,
-        area_sq_m: piece.length * cellSizeM * cellSizeM,
-        mean_value: round3(piece.reduce((sum, c) => sum + c.values[index], 0) / piece.length),
-      });
+      );
     }
   }
 
@@ -473,6 +533,7 @@ export function findPatches(cells: HealthCell[], index: IndexKey, cellSizeM: num
           a.centroid_lat - b.centroid_lat ||
           a.centroid_lng - b.centroid_lng,
       )
+      .slice(0, MAX_DROPS_PER_PLOT)
       .map((patch, i) => ({ rank: i + 1, ...patch }))
   );
 }

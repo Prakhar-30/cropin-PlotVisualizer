@@ -29,4 +29,10 @@ jobs:
         continue-on-error: true
         timeout-minutes: 3
         run: npm run build:shared && npm run probe -w @plot/api -- 12.7862 76.7201
+      # The grading in this checkout, run over the deployed plots. Read the log
+      # to check a grading change against real fields; never gating.
+      - name: Audit deployed plots
+        continue-on-error: true
+        timeout-minutes: 6
+        run: npm run audit -w @plot/api -- https://cropin-plot-visualizer-service-nu.vercel.app/
       - run: npm run build -w @plot/web

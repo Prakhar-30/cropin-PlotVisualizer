@@ -144,6 +144,21 @@ export function insideRingXY(ring: readonly [number, number][], x: number, y: nu
   return inside;
 }
 
+/** Distance from (x, y) to the nearest edge of [ring], map metres. */
+export function distanceToRingXY(ring: readonly [number, number][], x: number, y: number): number {
+  let best = Infinity;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [ax, ay] = ring[j]!;
+    const [bx, by] = ring[i]!;
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / len2));
+    best = Math.min(best, Math.hypot(x - (ax + t * dx), y - (ay + t * dy)));
+  }
+  return best;
+}
+
 /** A band read over the plot, sampled by map coordinate. */
 export class BandWindow {
   constructor(
@@ -168,17 +183,18 @@ export class BandWindow {
   }
 
   /**
-   * Like [bilinear], but blending only pixels whose centres are [inside] the
-   * plot.
+   * Like [bilinear], but blending only pixels that belong to the plot.
    *
    * A 10-20 m pixel on the boundary is part road, bund or neighbour's crop,
    * and blending it into the plot's edge cells painted a band of false stress
-   * all round every plot. Here the outside pixels get no weight; a cell with
-   * no inside pixel among its four takes the nearest inside pixel within two
-   * pixels; a plot too small to hold a pixel centre at all falls back to the
-   * plain blend, as nothing better is in the data.
+   * all round every plot. [accept] is tried tier by tier - pixels wholly
+   * inside the plot first, then pixels merely centred inside it - and in each
+   * tier the four pixels around (x, y) are blended by their bilinear weights
+   * among those accepted, or failing that the nearest accepted pixel within
+   * two and a half pixels is taken. A plot too small for any tier falls back
+   * to the plain blend, as nothing better is in the data.
    */
-  blend(x: number, y: number, inside: (x: number, y: number) => boolean): number {
+  blend(x: number, y: number, ...accept: ((x: number, y: number) => boolean)[]): number {
     const [c, r] = this.cog.pixelOf(x, y);
     const fc = c - 0.5 - this.window.col0;
     const fr = r - 0.5 - this.window.row0;
@@ -186,35 +202,43 @@ export class BandWindow {
     const r0 = Math.floor(fr);
     const tc = fc - c0;
     const tr = fr - r0;
-    let sum = 0;
-    let weight = 0;
-    for (const [dc, dr, w] of [
-      [0, 0, (1 - tc) * (1 - tr)],
-      [1, 0, tc * (1 - tr)],
-      [0, 1, (1 - tc) * tr],
-      [1, 1, tc * tr],
-    ] as const) {
-      const v = this.at(c0 + dc, r0 + dr);
-      if (!Number.isFinite(v) || !inside(...this.centre(c0 + dc, r0 + dr))) continue;
-      sum += v * w;
-      weight += w;
-    }
-    if (weight > 1e-9) return sum / weight;
-
-    let nearest = Number.NaN;
-    let nearestD = 2.0;
-    for (let dr = -2; dr <= 3; dr++) {
-      for (let dc = -2; dc <= 3; dc++) {
+    for (const ok of accept) {
+      let sum = 0;
+      let weight = 0;
+      for (const [dc, dr, w] of [
+        [0, 0, (1 - tc) * (1 - tr)],
+        [1, 0, tc * (1 - tr)],
+        [0, 1, (1 - tc) * tr],
+        [1, 1, tc * tr],
+      ] as const) {
         const v = this.at(c0 + dc, r0 + dr);
-        if (!Number.isFinite(v) || !inside(...this.centre(c0 + dc, r0 + dr))) continue;
-        const d = Math.hypot(c0 + dc - fc, r0 + dr - fr);
-        if (d <= nearestD) {
-          nearest = v;
-          nearestD = d;
+        if (!Number.isFinite(v) || !ok(...this.centre(c0 + dc, r0 + dr))) continue;
+        sum += v * w;
+        weight += w;
+      }
+      if (weight > 1e-9) return sum / weight;
+
+      let nearest = Number.NaN;
+      let nearestD = 2.5;
+      for (let dr = -2; dr <= 3; dr++) {
+        for (let dc = -2; dc <= 3; dc++) {
+          const v = this.at(c0 + dc, r0 + dr);
+          if (!Number.isFinite(v) || !ok(...this.centre(c0 + dc, r0 + dr))) continue;
+          const d = Math.hypot(c0 + dc - fc, r0 + dr - fr);
+          if (d <= nearestD) {
+            nearest = v;
+            nearestD = d;
+          }
         }
       }
+      if (Number.isFinite(nearest)) return nearest;
     }
-    return Number.isFinite(nearest) ? nearest : this.bilinear(x, y);
+    return this.bilinear(x, y);
+  }
+
+  /** Half a pixel's diagonal: a pixel centred this far inside a boundary lies wholly inside it. */
+  get halfDiagonal(): number {
+    return Math.hypot(this.cog.pixelSizeX, this.cog.pixelSizeY) / 2;
   }
 
   /** Map coordinates of the centre of window pixel (col, row). */
@@ -320,6 +344,9 @@ export async function sentinelSamplers(
     const bounds = utmBounds(polygon, zone);
     const ringXY = polygon.coordinates[0]!.map(([lng, lat]) => toUtm(lat!, lng!, zone));
     const insideXY = (x: number, y: number) => insideRingXY(ringXY, x, y);
+    /** Pixels wholly inside the plot, for a band of [halfDiagonal]. */
+    const wholly = (halfDiagonal: number) => (x: number, y: number) =>
+      insideRingXY(ringXY, x, y) && distanceToRingXY(ringXY, x, y) >= halfDiagonal;
     const scl = await readBand(assets.scl!.href, bounds, fetcher);
     const share = clearShare(scl, polygon, zone, inside);
     if (share < MIN_CLEAR_SHARE) continue;
@@ -349,11 +376,24 @@ export async function sentinelSamplers(
         cloudCoverPct: Number(item.properties['eo:cloud_cover'] ?? Number.NaN),
       },
       samplers: {
-        ndvi: index((x, y) => ratio(rho.nir(nir!.blend(x, y, insideXY)), rho.red(red!.blend(x, y, insideXY)))),
-        ndre: index((x, y) =>
-          ratio(rho.nir08(nir08!.blend(x, y, insideXY)), rho.rededge1(rededge!.blend(x, y, insideXY))),
+        ndvi: index((x, y) =>
+          ratio(
+            rho.nir(nir!.blend(x, y, wholly(nir!.halfDiagonal), insideXY)),
+            rho.red(red!.blend(x, y, wholly(red!.halfDiagonal), insideXY)),
+          ),
         ),
-        lswi: index((x, y) => ratio(rho.nir08(nir08!.blend(x, y, insideXY)), rho.swir16(swir!.blend(x, y, insideXY)))),
+        ndre: index((x, y) =>
+          ratio(
+            rho.nir08(nir08!.blend(x, y, wholly(nir08!.halfDiagonal), insideXY)),
+            rho.rededge1(rededge!.blend(x, y, wholly(rededge!.halfDiagonal), insideXY)),
+          ),
+        ),
+        lswi: index((x, y) =>
+          ratio(
+            rho.nir08(nir08!.blend(x, y, wholly(nir08!.halfDiagonal), insideXY)),
+            rho.swir16(swir!.blend(x, y, wholly(swir!.halfDiagonal), insideXY)),
+          ),
+        ),
       },
     };
   }

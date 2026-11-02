@@ -10,7 +10,8 @@
     "typecheck": "tsc -b",
     "seed": "tsx src/seed.ts",
     "test": "tsx src/test/api.test.ts && tsx src/test/satellite.test.ts",
-    "probe": "tsx src/satellite/probe.ts"
+    "probe": "tsx src/satellite/probe.ts",
+    "audit": "tsx src/satellite/audit.ts"
   },
   "dependencies": {
     "@plot/shared": "*",

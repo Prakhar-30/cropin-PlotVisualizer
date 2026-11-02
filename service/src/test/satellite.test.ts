@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import zlib from 'node:zlib';
 import { Cog, lzwDecode, type RangeFetcher } from '../satellite/geotiff.js';
-import { BandWindow, insideRingXY } from '../satellite/sentinel.js';
+import { BandWindow, distanceToRingXY, insideRingXY } from '../satellite/sentinel.js';
 import { meridianArc, toUtm, zoneFromEpsg } from '../satellite/utm.js';
 
 /* ----------------------------------------------------------------- UTM */
@@ -285,5 +285,26 @@ test('insideRingXY: even-odd in map metres', () => {
   ];
   assert.equal(insideRingXY(sq, 5, 5), true);
   assert.equal(insideRingXY(sq, 15, 5), false);
+});
+
+test('blend: pixels wholly inside the plot are preferred to ones merely centred in it', async () => {
+  // Road (100) west of x = 600100; a strip of mixed pixels (300) from there to
+  // 600110; crop (500) beyond. The plot starts at 600103, so the 300 column is
+  // centred inside it (600105) but half on the road.
+  const file = buildTiff(20, 20, 16, (c) => (c < 10 ? 100 : c === 10 ? 300 : 500));
+  const cog = await Cog.open('mem://band', fakeFetcher(file).fetch);
+  const band = new BandWindow(cog, await cog.readWindow(0, 0, 20, 20));
+  const plot: [number, number][] = [
+    [600103, 1419800],
+    [600200, 1419800],
+    [600200, 1420000],
+    [600103, 1420000],
+  ];
+  const inside = (x: number, y: number) => insideRingXY(plot, x, y);
+  const wholly = (x: number, y: number) => inside(x, y) && distanceToRingXY(plot, x, y) >= band.halfDiagonal;
+  const x = 600106;
+  const y = 1419905;
+  assert.equal(band.blend(x, y, inside), 300 * 0.9 + 500 * 0.1, 'centred-inside alone keeps the mixed pixel');
+  assert.equal(band.blend(x, y, wholly, inside), 500, 'wholly-inside first takes the crop');
 });
 
