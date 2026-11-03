@@ -170,6 +170,15 @@ right-click it to remove it, change the name, note or paths, and *Save changes*.
 The id and colour stay; the area is recomputed by the server as on create, and
 crop condition is recomputed for the new shape. `PUT /api/plots/:id`.
 
+**Walking the boundary with GPS.** On a phone at the plot, open *Mark a plot*
+and press *Start GPS walk*. Stand at a corner for a few seconds and press *Mark
+point here* (the last 4 s of fixes, averaged and weighted by their accuracy), or
+tick *Auto-mark every N m* (default 5) and walk the edge to drop points as you
+go - closer spacing follows a curved edge better. A fix worse than ±15 m never
+marks a point, and auto-mark never places points closer than the fix's own
+accuracy, so standing still adds nothing. Back at the start, *Close shape*;
+corners can still be dragged, removed or undone before saving.
+
 **Paths.** Once a shape is closed (new or edited), *Add path*, click along a
 walking path or track inside the plot, then *Finish path* or double-click. Each
 path has a width (default 2 m). A 3 m cell is left out of crop condition when a
