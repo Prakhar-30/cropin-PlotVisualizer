@@ -7,6 +7,7 @@ import { HealthPanel } from '../components/HealthPanel.js';
 import { LocateButton } from '../components/LocateButton.js';
 import { SearchBox } from '../components/SearchBox.js';
 import { emptyDrawState, PlotDrawController, type DrawState } from '../lib/drawController.js';
+import { useGpsWalk } from '../lib/useGpsWalk.js';
 import { CurrentLocationLayer } from '../lib/currentLocationLayer.js';
 import { emptyPathState, PathDrawController, type PathDrawState } from '../lib/pathDrawController.js';
 import { PlotHealthLayer } from '../lib/healthLayer.js';
@@ -43,6 +44,15 @@ export function MapPage() {
   const [healthIndex, setHealthIndex] = useState<IndexKey>('ndvi');
   /** On a phone only one panel fits; this says which. Ignored on a desktop. */
   const [mobilePanel, setMobilePanel] = useState<'draw' | 'health'>('health');
+
+  const gps = useGpsWalk({
+    mark: (position) => controller.current?.addVertex(position) ?? false,
+    lastVertex: () => controller.current?.lastVertex() ?? null,
+    onFix: (fix, first) => {
+      hereLayer.current?.setFix(fix);
+      if (first) map?.flyTo({ center: [fix.lng, fix.lat], zoom: Math.max(map.getZoom(), 18), duration: 700 });
+    },
+  });
 
   const refreshPlots = useCallback(async () => {
     try {
@@ -319,6 +329,16 @@ export function MapPage() {
         onCancelPath={() => pathsLayer.current?.cancelPath()}
         onRemovePath={(i) => pathsLayer.current?.removePath(i)}
         onPathWidth={(w) => pathsLayer.current?.setWidth(w)}
+        walk={gps.walk}
+        onWalkStart={() => {
+          setSaved(null);
+          setError(null);
+          gps.start();
+        }}
+        onWalkStop={gps.stop}
+        onMarkHere={gps.markHere}
+        onWalkAuto={gps.setAuto}
+        onWalkSpacing={gps.setSpacing}
       />
     </div>
   );

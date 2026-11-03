@@ -856,3 +856,45 @@ button:disabled {
   gap: 8px;
   flex-shrink: 0;
 }
+
+/* Walking the boundary with GPS, in the draw panel */
+.walk {
+  margin: 4px 0 12px;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--panel-edge);
+}
+
+.walk .paths__head .label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.walk__gps {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.walk__gps.ok,
+.walk__gps.warn {
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+}
+
+.walk__auto {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.walk__auto input[type='number'] {
+  width: 56px;
+  padding: 4px 6px;
+}

@@ -6,12 +6,16 @@ import {
   MAX_PLOT_AREA_HA,
   MIN_PATH_WIDTH_M,
   ringToPolygon,
+  WALK_MAX_ACCURACY_M,
+  WALK_MAX_SPACING_M,
+  WALK_MIN_SPACING_M,
   type PathExclusion,
   validatePlotInput,
   type Plot,
 } from '@plot/shared';
 import type { DrawState } from '../lib/drawController.js';
 import { pathLengthM, type PathDrawState } from '../lib/pathDrawController.js';
+import type { GpsWalkState } from '../lib/useGpsWalk.js';
 
 interface Props {
   state: DrawState;
@@ -42,6 +46,13 @@ interface Props {
   onCancelPath: () => void;
   onRemovePath: (index: number) => void;
   onPathWidth: (widthM: number) => void;
+  /** Marking the boundary by walking it with GPS. */
+  walk: GpsWalkState;
+  onWalkStart: () => void;
+  onWalkStop: () => void;
+  onMarkHere: () => void;
+  onWalkAuto: (auto: boolean) => void;
+  onWalkSpacing: (spacingM: number) => void;
   /** Hidden on a phone while the health panel is showing. */
   className?: string;
 }
@@ -105,6 +116,8 @@ export function DrawPanel(props: Props) {
           <span className="label">corners</span>
         </div>
       </section>
+
+      {!state.closed && <WalkSection {...props} />}
 
       {state.selfIntersecting && (
         <p className="warn">The boundary crosses itself. Move a corner to untangle it.</p>
@@ -266,5 +279,68 @@ export function DrawPanel(props: Props) {
         </section>
       )}
     </aside>
+  );
+}
+
+/**
+ * Walk the boundary: GPS marks each corner, by a press while standing at it or
+ * automatically every few metres - for edges the imagery does not show well.
+ */
+function WalkSection(props: Props) {
+  const { walk } = props;
+  const accuracy = walk.latest?.accuracyM ?? null;
+  const good = accuracy !== null && accuracy <= WALK_MAX_ACCURACY_M;
+  return (
+    <section className="walk">
+      <div className="paths__head">
+        <span className="label">Walk the boundary with GPS</span>
+        {walk.active && (
+          <span className={good ? 'walk__gps ok' : 'walk__gps warn'}>
+            {accuracy === null ? 'waiting for GPS…' : `GPS ±${Math.round(accuracy)} m`}
+          </span>
+        )}
+      </div>
+      <p className="hint">
+        {walk.active
+          ? `Stand at a corner for a few seconds, then Mark point - or turn on auto-mark and walk the edge. ` +
+            `Close shape when you are back at the start.${walk.marked > 0 ? ` ${walk.marked} marked this walk.` : ''}`
+          : 'On a phone at the plot: walk round the edge and mark corners where you stand.'}
+      </p>
+      {walk.active && (
+        <label className="walk__auto">
+          <input type="checkbox" checked={walk.auto} onChange={(e) => props.onWalkAuto(e.target.checked)} />
+          Auto-mark every
+          <input
+            type="number"
+            min={WALK_MIN_SPACING_M}
+            max={WALK_MAX_SPACING_M}
+            step={1}
+            value={walk.spacingM}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              if (Number.isFinite(v)) props.onWalkSpacing(Math.min(WALK_MAX_SPACING_M, Math.max(WALK_MIN_SPACING_M, v)));
+            }}
+          />
+          m while walking
+        </label>
+      )}
+      {walk.error && <p className="warn">{walk.error}</p>}
+      <div className="actions">
+        {walk.active ? (
+          <>
+            <button type="button" className="primary" disabled={!good} onClick={props.onMarkHere}>
+              Mark point here
+            </button>
+            <button type="button" className="ghost" onClick={props.onWalkStop}>
+              Stop GPS
+            </button>
+          </>
+        ) : (
+          <button type="button" onClick={props.onWalkStart}>
+            Start GPS walk
+          </button>
+        )}
+      </div>
+    </section>
   );
 }

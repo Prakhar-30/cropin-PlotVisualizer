@@ -5,6 +5,7 @@ import {
   ringToPolygon,
   type Polygon,
   type Position,
+  walkDistanceM,
 } from '@plot/shared';
 import { type GeoJSONSource, type Map as MapLibreMap, type MapMouseEvent } from 'maplibre-gl';
 import { MapOverlay } from './mapOverlay.js';
@@ -57,6 +58,9 @@ const VERTEX_RADIUS_PX = 6;
  * duplicated vertex makes a zero-length edge that reads as self-intersecting.
  */
 const VERTEX_MERGE_SLOP_PX = 8;
+
+/** A GPS point this close to the last corner repeats it. */
+const MIN_GPS_GAP_M = 0.5;
 
 const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 
@@ -178,6 +182,28 @@ export class PlotDrawController extends MapOverlay {
     if (this.vertices.length < 3) this.closed = false;
     if (!this.closed && this.mode !== 'idle') this.mode = 'drawing';
     this.render();
+  }
+
+  /**
+   * Adds a corner at [position] - from a GPS walk rather than a click. Starts
+   * a new shape if nothing is being drawn. Returns false when the shape is
+   * already closed, or the point repeats the last one.
+   */
+  addVertex(position: Position): boolean {
+    if (this.mode === 'idle') this.startNew();
+    if (this.mode !== 'drawing' || this.closed) return false;
+    const last = this.vertices[this.vertices.length - 1];
+    if (last && walkDistanceM({ lng: last[0]!, lat: last[1]! }, { lng: position[0]!, lat: position[1]! }) < MIN_GPS_GAP_M) {
+      return false;
+    }
+    this.vertices.push([position[0]!, position[1]!]);
+    this.render();
+    return true;
+  }
+
+  /** The most recent corner, if any. */
+  lastVertex(): Position | null {
+    return this.vertices[this.vertices.length - 1] ?? null;
   }
 
   /** Closes the ring, as a double-click does. */

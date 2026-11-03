@@ -6,3 +6,4 @@ export * from './id.js';
 export * from './validation.js';
 export * from './palette.js';
 export * from './health.js';
+export * from './gpsWalk.js';
